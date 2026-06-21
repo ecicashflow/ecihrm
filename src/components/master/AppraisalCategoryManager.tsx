@@ -334,7 +334,7 @@ export default function AppraisalCategoryManager() {
                         {cat.description || '-'}
                       </TableCell>
                       <TableCell className="hidden sm:table-cell text-sm">
-                        {cat.ratingScaleName || (
+                        {cat.ratingScale?.name || cat.ratingScaleName || (
                           <span className="text-muted-foreground">—</span>
                         )}
                       </TableCell>

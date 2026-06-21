@@ -253,6 +253,7 @@ export interface AppraisalCategoryItem {
   sortOrder: number;
   ratingScaleId: string | null;
   ratingScaleName: string | null;
+  ratingScale?: { id: string; name: string; minScore: number; maxScore: number } | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

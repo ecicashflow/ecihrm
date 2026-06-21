@@ -8,7 +8,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/store/app-store';
 import { format } from 'date-fns';
-import { toast } from 'sonner';
 import type { AuditLogItem } from '@/lib/types';
 
 const statusColorMap: Record<string, string> = {
@@ -34,16 +33,22 @@ export default function AuditLogViewer() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!assignmentId) return;
     async function fetchLogs() {
       try {
-        const res = await fetch(`/api/audit-logs?assignmentId=${assignmentId}`);
+        // If we have an assignmentId, filter by it; otherwise fetch all logs (admin view)
+        const url = assignmentId
+          ? `/api/audit-logs?assignmentId=${assignmentId}`
+          : '/api/audit-logs?limit=200';
+        const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          setLogs(data.logs || []);
+          // API returns { logs: [...], total: n }
+          const list = Array.isArray(data) ? data : (data.logs || []);
+          setLogs(list);
+        } else {
+          setLogs([]);
         }
       } catch {
-        // Server unavailable - show empty state gracefully
         console.warn('Server unavailable, showing empty audit log');
         setLogs([]);
       } finally {
@@ -68,22 +73,30 @@ export default function AuditLogViewer() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" onClick={() => setCurrentView('appraisal-list')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back
-        </Button>
-        <h2 className="text-2xl font-bold">Audit Log</h2>
+        {assignmentId ? (
+          <Button variant="ghost" size="sm" onClick={() => setCurrentView('appraisal-list')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+        ) : null}
+        <h2 className="text-2xl font-bold">
+          {assignmentId ? 'Assignment Audit Log' : 'System Audit Logs'}
+        </h2>
       </div>
 
       {/* Timeline */}
       <Card className="eci-card">
         <CardHeader>
-          <CardTitle className="text-lg">Status History</CardTitle>
+          <CardTitle className="text-lg">
+            {assignmentId ? 'Status History' : `All Activity (${logs.length} ${logs.length === 1 ? 'entry' : 'entries'})`}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {logs.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              No audit logs found for this assignment
+              {assignmentId
+                ? 'No audit logs found for this assignment'
+                : 'No audit logs found. Activity will appear here once appraisal workflows begin.'}
             </div>
           ) : (
             <div className="relative pl-8">
