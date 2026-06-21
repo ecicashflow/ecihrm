@@ -1,32 +1,282 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// ECI HRM Performance Appraisal System — Prisma schema
+// Database: PostgreSQL (Neon serverless Postgres compatible)
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Neon: pooled connection for the app (DATABASE_URL),
+  // direct (non-pooled) connection for migrations (DIRECT_DATABASE_URL).
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  password       String   @default("password123")
+  name           String
+  employeeId     String   @unique
+  designation    String
+  department     String
+  phone          String?
+  overallExp     String   @default("")
+  yearsWithECI   String   @default("")
+  currentEdu     String   @default("")
+  lineManagerId  String?
+  lineManager    User?    @relation("LineManager", fields: [lineManagerId], references: [id])
+  role           String   @default("employee") // admin, supervisor, management, employee, hr
+  isSupervisor   Boolean  @default(false) // true if this employee can supervise others (dual-role)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  supervisedEmployees User[] @relation("LineManager")
+  createdCycles       AppraisalCycle[] @relation("createdCycles")
+  appraisals          AppraisalAssignment[]
+
+  notifications Notification[] @relation("UserNotifications")
+  auditLogs    AuditLog[]
+
+  supervisorAppraisals AppraisalAssignment[] @relation("SupervisorAppraisals")
+  escalatedAppraisals AppraisalAssignment[] @relation("EscalatedSupervisor")
+
+  @@index([lineManagerId])
+  @@index([role])
+  @@index([isActive])
+}
+
+model Department {
   id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
+  name      String   @unique
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Designation {
+  id                String   @id @default(cuid())
+  title             String   @unique
+  requiredExp       String   @default("")
+  requiredEdu       String   @default("")
+  department        String   @default("")
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model AppraisalCycle {
+  id              String   @id @default(cuid())
+  name            String
+  cycleType       String   // "mid_year" | "annual"
+  year            String
+  periodFrom      String
+  periodTo        String
+  startDate       DateTime
+  endDate         DateTime
+  submissionDeadline DateTime
+  status          String   @default("draft") // draft, active, closed, archived
+  createdById     String
+  createdBy       User     @relation("createdCycles", fields: [createdById], references: [id])
+  applicableDepts String   @default("[]") // JSON array
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assignments AppraisalAssignment[]
+
+  @@index([status])
+  @@index([createdById])
+}
+
+model AppraisalAssignment {
+  id              String   @id @default(cuid())
+  cycleId         String
+  cycle           AppraisalCycle @relation(fields: [cycleId], references: [id])
+  employeeId      String
+  employee        User     @relation(fields: [employeeId], references: [id])
+  supervisorId    String
+  supervisor      User     @relation("SupervisorAppraisals", fields: [supervisorId], references: [id])
+  escalatedSupervisorId String? // Used when supervisor === employee to prevent self-review
+  escalatedSupervisor   User?   @relation("EscalatedSupervisor", fields: [escalatedSupervisorId], references: [id])
+  status          String   @default("assigned_to_employee")
+  // assigned_to_employee, submitted_by_employee, under_supervisor_review,
+  // submitted_by_supervisor, under_hr_review, submitted_to_management,
+  // under_management_review, returned_for_correction, approved,
+  // shared_with_employee, acknowledged_by_employee, closed
+
+  currentActionBy String   @default("employee") // employee, supervisor, hr, management
+  returnReason    String   @default("")
+  deadline        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  formData        AppraisalFormData?
+  auditLogs       AuditLog[]
+  notifications   Notification[]
+
+  @@unique([cycleId, employeeId])
+  @@index([cycleId])
+  @@index([employeeId])
+  @@index([supervisorId])
+  @@index([status])
+}
+
+model AppraisalFormData {
+  id                    String   @id @default(cuid())
+  assignmentId          String   @unique
+  assignment            AppraisalAssignment @relation(fields: [assignmentId], references: [id])
+
+  // Section 1: Basic Info (mostly from user record, but snapshot at time of form)
+  employeeName          String   @default("")
+  employeeId            String   @default("")
+  designation           String   @default("")
+  overallExp            String   @default("")
+  yearsWithECI          String   @default("")
+  currentEdu            String   @default("")
+  requiredExp           String   @default("")
+  requiredEdu           String   @default("")
+  department            String   @default("")
+  appraisalPeriod       String   @default("")
+  lineManagerName       String   @default("")
+  lineManagerDesignation String  @default("")
+
+  // Section 2: Key Accomplishments and Goals (JSON)
+  achievementsJson      String   @default("[]")
+  goalsJson             String   @default("[]")
+  achievementsSubtotalEmployee    Float @default(0)
+  achievementsSubtotalSupervisor  Float @default(0)
+
+  // Section 3: Competencies (JSON)
+  technicalSkillsJson    String   @default("[]")
+  leadershipSkillsJson   String   @default("[]")
+  managerialSkillsJson   String   @default("[]")
+  technicalSubtotalEmployee     Float @default(0)
+  technicalSubtotalSupervisor   Float @default(0)
+  leadershipSubtotalEmployee    Float @default(0)
+  leadershipSubtotalSupervisor  Float @default(0)
+  managerialSubtotalEmployee    Float @default(0)
+  managerialSubtotalSupervisor  Float @default(0)
+  totalCompetenciesEmployee     Float @default(0)
+  totalCompetenciesSupervisor   Float @default(0)
+
+  // Section 4: Explanations (JSON)
+  explanationsJson       String   @default("[]")
+  totalMarksDeducted     Float @default(0)
+
+  // Section 5: Overall Evaluation (computed)
+  totalNAInGoalsEmployee      Int @default(0)
+  totalNAInGoalsSupervisor    Int @default(0)
+  totalMarksGoalsEmployee     Float @default(0)
+  totalMarksGoalsSupervisor   Float @default(0)
+  maxMarksGoals               Float @default(24)
+  totalNAInTechnicalEmployee      Int @default(0)
+  totalNAInTechnicalSupervisor    Int @default(0)
+  totalNAInLeadershipEmployee     Int @default(0)
+  totalNAInLeadershipSupervisor   Int @default(0)
+  totalNAInManagerialEmployee     Int @default(0)
+  totalNAInManagerialSupervisor   Int @default(0)
+  maxMarksCompetencies         Float @default(110)
+  totalNAInExplanations        Int @default(0)
+  maxMarksExplanations         Float @default(9)
+
+  grandTotalEmployee          Float @default(0)
+  grandTotalSupervisor        Float @default(0)
+  overallPercentageEmployee   Float @default(0)
+  overallPercentageSupervisor Float @default(0)
+  ratingEmployee              String   @default("")
+  ratingSupervisor            String   @default("")
+
+  // Section 6: Future Goals (JSON)
+  futureGoalsJson         String   @default("[]")
+
+  // Section 7: Remarks (JSON)
+  remarksJson            String   @default("{}")
+
+  // Section 8: Certification
+  employeeSignature     String   @default("")
+  employeeSignatureDate String   @default("")
+  supervisorSignature   String   @default("")
+  supervisorSignatureDate String  @default("")
+  ceoSignature          String   @default("")
+  ceoSignatureDate      String   @default("")
+
+  // AI Analysis
+  aiAnalysisJson        String   @default("{}")
+
+  submittedByEmployeeAt    DateTime?
+  submittedBySupervisorAt  DateTime?
+  submittedByHRAt          DateTime?
+  approvedByManagementAt   DateTime?
+  acknowledgedByEmployeeAt DateTime?
+
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model RatingScale {
+  id          String   @id @default(cuid())
+  name        String
+  description  String   @default("")
+  minScore    Int      @default(0)
+  maxScore    Int      @default(5)
+  labelsJson  String   @default("[]") // e.g. [{"score":0,"label":"N/A"},{"score":1,"label":"Poor"},...]
+  appliesTo   String   @default("")  // "goals", "competencies", "explanations", or ""
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  categories  AppraisalCategory[]
+}
+
+model AppraisalCategory {
+  id            String      @id @default(cuid())
+  name          String
+  section       String      // "goals", "technical_skills", "leadership_skills", "managerial_skills", "explanations"
+  description   String      @default("")
+  sortOrder     Int         @default(0)
+  ratingScaleId String?
+  ratingScale   RatingScale? @relation(fields: [ratingScaleId], references: [id])
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([section])
+}
+
+model Notification {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation("UserNotifications", fields: [userId], references: [id])
+  assignmentId    String?
+  assignment      AppraisalAssignment? @relation(fields: [assignmentId], references: [id])
+  type            String   // cycle_activated, form_assigned, employee_submitted, supervisor_submitted, hr_submitted, management_approved, returned_for_correction, reminder, overdue
+  title           String
+  message         String
+  actionRequired  Boolean  @default(false)
+  isRead          Boolean  @default(false)
+  link            String   @default("")
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([assignmentId])
+}
+
+model AuditLog {
+  id              String   @id @default(cuid())
+  assignmentId    String
+  assignment      AppraisalAssignment @relation(fields: [assignmentId], references: [id])
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  action          String   // submitted, returned, approved, acknowledged, remark_added, etc.
+  previousStatus  String
+  newStatus       String
+  details         String   @default("")
+  createdAt       DateTime @default(now())
+
+  @@index([assignmentId])
+  @@index([userId])
 }
