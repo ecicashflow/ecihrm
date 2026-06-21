@@ -6,11 +6,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  // TEMPORARY: SQLite for local sandbox preview only.
+  // The git-staged (production) version uses "postgresql" + directUrl.
+  // Restore to postgresql before committing if you edit this file.
+  provider = "sqlite"
   url      = env("DATABASE_URL")
-  // Neon: pooled connection for the app (DATABASE_URL),
-  // direct (non-pooled) connection for migrations (DIRECT_DATABASE_URL).
-  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 model User {
