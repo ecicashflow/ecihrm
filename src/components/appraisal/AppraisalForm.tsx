@@ -377,8 +377,8 @@ export default function AppraisalForm() {
     }
   };
 
-  // Who can see the AI analysis section? Admin, HR, Management, Supervisor
-  const canViewAiAnalysis = ['admin', 'hr', 'management', 'supervisor'].includes(userRole);
+  // AI Analysis is admin-only — all reporting and analysis is monitored by the administrator
+  const canViewAiAnalysis = userRole === 'admin';
 
   if (loading) {
     return (
@@ -1167,7 +1167,7 @@ export default function AppraisalForm() {
         </CardContent>
       </Card>
 
-      {/* AI Analysis Section (Admin/HR/Management/Supervisor only) */}
+      {/* AI Analysis Section (Admin only — all reporting/analysis monitored by administrator) */}
       {canViewAiAnalysis && (
         <Card className="eci-card overflow-hidden border-violet-200">
           <div className="bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 px-4 py-3 border-b border-violet-200 dark:border-violet-900">

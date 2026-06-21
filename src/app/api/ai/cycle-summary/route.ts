@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { aiEnabled, getLLMResponse } from '@/lib/ai';
+import { requireRole } from '@/lib/auth-guard';
 
 async function generateSummary(cycleId: string) {
   const cycle = await db.appraisalCycle.findUnique({
@@ -87,8 +88,12 @@ Keep it concise and actionable.`;
 }
 
 // GET - Auto-find active cycle and generate summary
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    // AI features are admin-only
+    const auth = await requireRole(request, ['admin']);
+    if (auth.error) return auth.error;
+
     if (!aiEnabled()) {
       return NextResponse.json(
         { error: 'AI features are not configured. Set OPENAI_API_KEY in the server environment.' },
@@ -120,6 +125,10 @@ export async function GET() {
 // POST - Generate summary for a specific cycle
 export async function POST(request: NextRequest) {
   try {
+    // AI features are admin-only
+    const auth = await requireRole(request, ['admin']);
+    if (auth.error) return auth.error;
+
     if (!aiEnabled()) {
       return NextResponse.json(
         { error: 'AI features are not configured. Set OPENAI_API_KEY in the server environment.' },

@@ -14,9 +14,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Users, CheckCircle, TrendingUp, TrendingDown, FileBarChart, Sparkles, Eye } from 'lucide-react';
+import { Users, CheckCircle, TrendingUp, TrendingDown, FileBarChart, Eye } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { toast } from 'sonner';
 import { APPRAISAL_STATUS_LABELS, APPRAISAL_STATUS_COLORS } from '@/lib/constants';
 import type { AppraisalStatus } from '@/lib/types';
 
@@ -64,8 +63,6 @@ export default function ManagementDashboard() {
   const { currentUser, setCurrentView, setViewParams } = useAppStore();
   const [stats, setStats] = useState<ManagementStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -86,23 +83,6 @@ export default function ManagementDashboard() {
     }
     fetchData();
   }, [currentUser]);
-
-  const handleAiSummary = async () => {
-    setAiLoading(true);
-    try {
-      const res = await fetch('/api/ai/cycle-summary');
-      if (res.ok) {
-        const data = await res.json();
-        setAiSummary(data.summary || 'No summary available.');
-      } else {
-        toast.error('Failed to generate AI summary');
-      }
-    } catch {
-      toast.error('Failed to generate AI summary');
-    } finally {
-      setAiLoading(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -295,30 +275,6 @@ export default function ManagementDashboard() {
             <div className="h-32 flex items-center justify-center text-muted-foreground">
               No pending approvals
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* AI Summary */}
-      <Card className="eci-card">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">AI Cycle Summary</CardTitle>
-            <Button variant="outline" size="sm" onClick={handleAiSummary} disabled={aiLoading}>
-              <Sparkles className="h-4 w-4 mr-2" />
-              {aiLoading ? 'Generating...' : 'Generate Summary'}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {aiSummary ? (
-            <div className="prose prose-sm max-w-none whitespace-pre-wrap text-sm text-muted-foreground bg-muted/30 p-4 rounded-lg">
-              {aiSummary}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              Click the button to generate an AI-powered summary of the current appraisal cycle.
-            </p>
           )}
         </CardContent>
       </Card>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAppStore } from '@/store/app-store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,6 +32,8 @@ interface ReportData {
 const RATING_COLORS = ['#16a34a', '#2563eb', '#ca8a04', '#ea580c', '#dc2626'];
 
 export default function ReportViewer() {
+  const { currentUser } = useAppStore();
+  const isAdmin = currentUser?.role === 'admin';
   const [cycles, setCycles] = useState<CycleDetail[]>([]);
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
   const [selectedCycle, setSelectedCycle] = useState('all');
@@ -164,10 +167,12 @@ export default function ReportViewer() {
             ))}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" onClick={handleAiAnalysis} disabled={aiLoading}>
-          <Sparkles className="h-4 w-4 mr-2" />
-          {aiLoading ? 'Analyzing...' : 'AI Analysis'}
-        </Button>
+        {isAdmin && (
+          <Button variant="outline" size="sm" onClick={handleAiAnalysis} disabled={aiLoading}>
+            <Sparkles className="h-4 w-4 mr-2" />
+            {aiLoading ? 'Analyzing...' : 'AI Analysis'}
+          </Button>
+        )}
       </div>
 
       {/* Summary Cards */}
@@ -265,8 +270,8 @@ export default function ReportViewer() {
         </Card>
       </div>
 
-      {/* AI Summary */}
-      {aiSummary && (
+      {/* AI Summary (admin only) */}
+      {isAdmin && aiSummary && (
         <Card className="eci-card">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">

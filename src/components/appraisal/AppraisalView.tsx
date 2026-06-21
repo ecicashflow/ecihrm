@@ -21,6 +21,7 @@ import {
   MANAGERIAL_SKILLS,
   SECTION_DESCRIPTIONS,
   calculateAppraisalScores,
+  createDefaultFormData,
   OVERALL_RATING_SCALE,
 } from '@/lib/constants';
 import { APPRAISAL_STATUS_LABELS, APPRAISAL_STATUS_COLORS } from '@/lib/constants';
@@ -45,7 +46,41 @@ export default function AppraisalView() {
           fetch(`/api/assignments/${assignmentId}/form`),
         ]);
         if (assignRes.ok) setAssignment(await assignRes.json());
-        if (formRes.ok) setFormData((await formRes.json()).formData || null);
+        if (formRes.ok) {
+          // API returns form data directly (not wrapped in `formData`).
+          // Merge with defaults so all fields are populated correctly.
+          const data = await formRes.json();
+          const defaults = createDefaultFormData();
+          setFormData({
+            ...defaults,
+            employeeName: data.employeeName || '',
+            employeeId: data.employeeId || '',
+            designation: data.designation || '',
+            overallExp: data.overallExp || '',
+            yearsWithECI: data.yearsWithECI || '',
+            currentEdu: data.currentEdu || '',
+            requiredExp: data.requiredExp || '',
+            requiredEdu: data.requiredEdu || '',
+            department: data.department || '',
+            appraisalPeriod: data.appraisalPeriod || '',
+            lineManagerName: data.lineManagerName || '',
+            lineManagerDesignation: data.lineManagerDesignation || '',
+            achievements: Array.isArray(data.achievements) ? data.achievements : defaults.achievements,
+            goals: Array.isArray(data.goals) ? data.goals : defaults.goals,
+            technicalSkills: Array.isArray(data.technicalSkills) ? data.technicalSkills : defaults.technicalSkills,
+            leadershipSkills: Array.isArray(data.leadershipSkills) ? data.leadershipSkills : defaults.leadershipSkills,
+            managerialSkills: Array.isArray(data.managerialSkills) ? data.managerialSkills : defaults.managerialSkills,
+            explanations: Array.isArray(data.explanations) ? data.explanations : defaults.explanations,
+            futureGoals: Array.isArray(data.futureGoals) ? data.futureGoals : defaults.futureGoals,
+            remarks: data.remarks || defaults.remarks,
+            employeeSignature: data.employeeSignature || '',
+            employeeSignatureDate: data.employeeSignatureDate || '',
+            supervisorSignature: data.supervisorSignature || '',
+            supervisorSignatureDate: data.supervisorSignatureDate || '',
+            ceoSignature: data.ceoSignature || '',
+            ceoSignatureDate: data.ceoSignatureDate || '',
+          });
+        }
       } catch {
         console.warn('Server unavailable, could not load appraisal data');
         setError('Unable to load appraisal data. The server may be temporarily unavailable.');
