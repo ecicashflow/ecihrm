@@ -39,13 +39,22 @@ export async function PUT(
     const body = await request.json();
     const { title, requiredExp, requiredEdu, department } = body;
 
-    if (!title || !title.trim()) {
-      return NextResponse.json({ error: 'Designation title is required' }, { status: 400 });
-    }
-
     const existing = await db.designation.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json({ error: 'Designation not found' }, { status: 404 });
+    }
+
+    // Toggle active status (for the activate/deactivate switch)
+    if (body.isActive !== undefined && title === undefined) {
+      const updated = await db.designation.update({
+        where: { id },
+        data: { isActive: body.isActive },
+      });
+      return NextResponse.json(updated);
+    }
+
+    if (!title || !title.trim()) {
+      return NextResponse.json({ error: 'Designation title is required' }, { status: 400 });
     }
 
     if (title.trim() !== existing.title) {
@@ -62,6 +71,7 @@ export async function PUT(
         ...(requiredExp !== undefined && { requiredExp }),
         ...(requiredEdu !== undefined && { requiredEdu }),
         ...(department !== undefined && { department }),
+        ...(body.isActive !== undefined && { isActive: body.isActive }),
       },
     });
 

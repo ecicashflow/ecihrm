@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
@@ -356,19 +355,27 @@ export default function AppraisalCategoryManager() {
                           <Button variant="ghost" size="sm" onClick={() => openEdit(cat)} title="Edit">
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
+                          {/* Use a div (not Button) to avoid nested-button hydration error with Switch */}
+                          <button
+                            type="button"
                             onClick={() => handleToggleActive(cat)}
                             disabled={togglingId === cat.id}
                             title={cat.isActive ? 'Deactivate' : 'Activate'}
+                            aria-label={cat.isActive ? 'Deactivate category' : 'Activate category'}
+                            className="inline-flex items-center justify-center h-8 px-2 rounded-md hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                           >
                             {togglingId === cat.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              <Switch className="scale-75" checked={cat.isActive} />
+                              <span className="inline-flex items-center">
+                                <span
+                                  className={`inline-flex h-[1.15rem] w-8 items-center rounded-full border border-transparent shadow-xs transition-all ${cat.isActive ? 'bg-primary' : 'bg-input'}`}
+                                >
+                                  <span className={`h-3.5 w-3.5 bg-white rounded-full shadow-sm transition-transform ${cat.isActive ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                                </span>
+                              </span>
                             )}
-                          </Button>
+                          </button>
                           <Button
                             variant="ghost"
                             size="sm"

@@ -37,7 +37,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { ArrowLeft, Save, Send, RotateCcw, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Save, Send, RotateCcw, Loader2, AlertTriangle, Sparkles, BrainCircuit } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   AppraisalFormDataFull,
@@ -75,6 +75,11 @@ export default function AppraisalForm() {
   const [returning, setReturning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // AI analysis state
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [aiAnalysis, setAiAnalysis] = useState<Record<string, unknown> | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
   const userRole = currentUser?.role || 'employee';
   const currentActionBy = assignment?.currentActionBy;
 
@@ -98,7 +103,50 @@ export default function AppraisalForm() {
         if (assignRes.ok) setAssignment(await assignRes.json());
         if (formRes.ok) {
           const data = await formRes.json();
-          setFormData(data.formData || createDefaultFormData());
+          // The API returns form data directly (employeeName, designation, etc. at top level)
+          // — NOT wrapped in a `formData` property. Merge the server data with defaults
+          // so all fields (including basic info) are populated correctly.
+          const defaults = createDefaultFormData();
+          const merged: AppraisalFormDataFull = {
+            ...defaults,
+            // Basic info (Section 1) — comes from the server, populated from the
+            // employee + designation + cycle records when the form is first created.
+            employeeName: data.employeeName || '',
+            employeeId: data.employeeId || '',
+            designation: data.designation || '',
+            overallExp: data.overallExp || '',
+            yearsWithECI: data.yearsWithECI || '',
+            currentEdu: data.currentEdu || '',
+            requiredExp: data.requiredExp || '',
+            requiredEdu: data.requiredEdu || '',
+            department: data.department || '',
+            appraisalPeriod: data.appraisalPeriod || '',
+            lineManagerName: data.lineManagerName || '',
+            lineManagerDesignation: data.lineManagerDesignation || '',
+            // JSON array fields
+            achievements: Array.isArray(data.achievements) ? data.achievements : defaults.achievements,
+            goals: Array.isArray(data.goals) ? data.goals : defaults.goals,
+            technicalSkills: Array.isArray(data.technicalSkills) ? data.technicalSkills : defaults.technicalSkills,
+            leadershipSkills: Array.isArray(data.leadershipSkills) ? data.leadershipSkills : defaults.leadershipSkills,
+            managerialSkills: Array.isArray(data.managerialSkills) ? data.managerialSkills : defaults.managerialSkills,
+            explanations: Array.isArray(data.explanations) ? data.explanations : defaults.explanations,
+            futureGoals: Array.isArray(data.futureGoals) ? data.futureGoals : defaults.futureGoals,
+            remarks: data.remarks || defaults.remarks,
+            // Signatures
+            employeeSignature: data.employeeSignature || '',
+            employeeSignatureDate: data.employeeSignatureDate || '',
+            supervisorSignature: data.supervisorSignature || '',
+            supervisorSignatureDate: data.supervisorSignatureDate || '',
+            ceoSignature: data.ceoSignature || '',
+            ceoSignatureDate: data.ceoSignatureDate || '',
+            // AI analysis (may be empty object)
+            aiAnalysis: data.aiAnalysis || {},
+          };
+          setFormData(merged);
+          // Load existing AI analysis if present
+          if (data.aiAnalysis && Object.keys(data.aiAnalysis).length > 0) {
+            setAiAnalysis(data.aiAnalysis);
+          }
         } else {
           setFormData(createDefaultFormData());
         }
@@ -295,6 +343,42 @@ export default function AppraisalForm() {
       setReturnDialog(false);
     }
   };
+
+  // AI Analysis — generate insights from the appraisal data
+  const handleAiAnalyze = async () => {
+    if (!assignmentId) return;
+    setAiAnalyzing(true);
+    setAiError(null);
+    try {
+      const res = await fetch('/api/ai/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignmentId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAiAnalysis(data.analysis || {});
+        toast.success('AI analysis generated successfully');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        const msg = data.error || 'Failed to generate AI analysis';
+        setAiError(msg);
+        if (res.status === 503) {
+          toast.error('AI features are not configured. Set OPENAI_API_KEY in the server environment to enable AI analysis.');
+        } else {
+          toast.error(msg);
+        }
+      }
+    } catch {
+      setAiError('Failed to connect to AI service');
+      toast.error('Failed to generate AI analysis');
+    } finally {
+      setAiAnalyzing(false);
+    }
+  };
+
+  // Who can see the AI analysis section? Admin, HR, Management, Supervisor
+  const canViewAiAnalysis = ['admin', 'hr', 'management', 'supervisor'].includes(userRole);
 
   if (loading) {
     return (
@@ -1082,6 +1166,175 @@ export default function AppraisalForm() {
           </div>
         </CardContent>
       </Card>
+
+      {/* AI Analysis Section (Admin/HR/Management/Supervisor only) */}
+      {canViewAiAnalysis && (
+        <Card className="eci-card overflow-hidden border-violet-200">
+          <div className="bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 px-4 py-3 border-b border-violet-200 dark:border-violet-900">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <BrainCircuit className="h-5 w-5 text-violet-600" />
+                <h3 className="font-semibold text-violet-900 dark:text-violet-200">AI-Powered Performance Analysis</h3>
+                <Badge className="bg-violet-100 text-violet-800 hover:bg-violet-100">OpenAI</Badge>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleAiAnalyze}
+                disabled={aiAnalyzing}
+                className="border-violet-300 text-violet-700 hover:bg-violet-100"
+              >
+                {aiAnalyzing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 mr-2" />
+                )}
+                {aiAnalyzing ? 'Analyzing...' : aiAnalysis ? 'Regenerate Analysis' : 'Generate AI Analysis'}
+              </Button>
+            </div>
+          </div>
+          <CardContent className="p-4">
+            {aiError ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+                <AlertTriangle className="h-4 w-4 inline mr-2" />
+                {aiError}
+                {aiError.includes('not configured') && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    To enable AI analysis, add <code className="bg-amber-100 px-1 rounded">OPENAI_API_KEY</code> to your
+                    environment variables. The app works fine without it — AI is an optional enhancement.
+                  </p>
+                )}
+              </div>
+            ) : aiAnalyzing ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 className="h-8 w-8 animate-spin text-violet-600" />
+                  <p className="text-sm text-muted-foreground">
+                    AI is analyzing the appraisal data...
+                  </p>
+                </div>
+              </div>
+            ) : aiAnalysis && Object.keys(aiAnalysis).length > 0 ? (
+              <div className="space-y-4">
+                {/* Summary */}
+                {typeof aiAnalysis.summary === 'string' && (
+                  <div className="bg-violet-50 dark:bg-violet-950/20 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-violet-700 dark:text-violet-400 uppercase tracking-wide mb-1">Summary</p>
+                    <p className="text-sm text-foreground">{aiAnalysis.summary}</p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Strengths */}
+                  {Array.isArray(aiAnalysis.strengths) && aiAnalysis.strengths.length > 0 && (
+                    <div className="bg-green-50 dark:bg-green-950/20 rounded-lg p-3">
+                      <p className="text-xs font-semibold text-green-700 dark:text-green-400 uppercase tracking-wide mb-2">Key Strengths</p>
+                      <ul className="space-y-1">
+                        {(aiAnalysis.strengths as string[]).map((s, i) => (
+                          <li key={i} className="text-sm text-foreground flex items-start gap-2">
+                            <span className="text-green-600 mt-0.5">✓</span>
+                            <span>{s}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Improvement Areas */}
+                  {Array.isArray(aiAnalysis.improvementAreas) && aiAnalysis.improvementAreas.length > 0 && (
+                    <div className="bg-orange-50 dark:bg-orange-950/20 rounded-lg p-3">
+                      <p className="text-xs font-semibold text-orange-700 dark:text-orange-400 uppercase tracking-wide mb-2">Areas for Improvement</p>
+                      <ul className="space-y-1">
+                        {(aiAnalysis.improvementAreas as string[]).map((s, i) => (
+                          <li key={i} className="text-sm text-foreground flex items-start gap-2">
+                            <span className="text-orange-600 mt-0.5">→</span>
+                            <span>{s}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Training Needs */}
+                  {Array.isArray(aiAnalysis.trainingNeeds) && aiAnalysis.trainingNeeds.length > 0 && (
+                    <div className="bg-blue-50 dark:bg-blue-950/20 rounded-lg p-3">
+                      <p className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-2">Recommended Training</p>
+                      <ul className="space-y-1">
+                        {(aiAnalysis.trainingNeeds as string[]).map((s, i) => (
+                          <li key={i} className="text-sm text-foreground flex items-start gap-2">
+                            <span className="text-blue-600 mt-0.5">📚</span>
+                            <span>{s}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Action Items */}
+                  {Array.isArray(aiAnalysis.actionItems) && aiAnalysis.actionItems.length > 0 && (
+                    <div className="bg-purple-50 dark:bg-purple-950/20 rounded-lg p-3">
+                      <p className="text-xs font-semibold text-purple-700 dark:text-purple-400 uppercase tracking-wide mb-2">Action Items</p>
+                      <ul className="space-y-1">
+                        {(aiAnalysis.actionItems as string[]).map((s, i) => (
+                          <li key={i} className="text-sm text-foreground flex items-start gap-2">
+                            <span className="text-purple-600 mt-0.5">▸</span>
+                            <span>{s}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                {/* Score Gap Analysis */}
+                {typeof aiAnalysis.scoreGap === 'string' && (
+                  <div className="bg-muted/30 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Score Gap Analysis</p>
+                    <p className="text-sm text-foreground">{aiAnalysis.scoreGap}</p>
+                  </div>
+                )}
+
+                {/* Supervisor Remarks Summary */}
+                {typeof aiAnalysis.supervisorRemarksSummary === 'string' && (
+                  <div className="bg-muted/30 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Supervisor Remarks Summary</p>
+                    <p className="text-sm text-foreground">{aiAnalysis.supervisorRemarksSummary}</p>
+                  </div>
+                )}
+
+                {/* HR Recommendation Summary */}
+                {typeof aiAnalysis.hrRecommendationSummary === 'string' && (
+                  <div className="bg-muted/30 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">HR Recommendation Summary</p>
+                    <p className="text-sm text-foreground">{aiAnalysis.hrRecommendationSummary}</p>
+                  </div>
+                )}
+
+                {/* Raw analysis fallback (if AI returned non-structured data) */}
+                {typeof aiAnalysis.rawAnalysis === 'string' && (
+                  <div className="bg-muted/30 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">AI Analysis</p>
+                    <p className="text-sm text-foreground whitespace-pre-wrap">{aiAnalysis.rawAnalysis}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-6">
+                <BrainCircuit className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
+                <p className="text-sm text-muted-foreground mb-1">
+                  Generate an AI-powered analysis of this appraisal
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  The AI will analyze scores, strengths, improvement areas, training needs, and provide actionable recommendations.
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Requires <code className="bg-muted px-1 rounded">OPENAI_API_KEY</code> to be configured on the server.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Bottom Actions */}
       <div className="flex items-center justify-between no-print">

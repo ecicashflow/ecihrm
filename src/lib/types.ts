@@ -124,6 +124,8 @@ export interface AppraisalFormDataFull {
   supervisorSignatureDate: string;
   ceoSignature: string;
   ceoSignatureDate: string;
+  // AI analysis (optional, may be empty object)
+  aiAnalysis?: Record<string, unknown>;
 }
 
 // Notification

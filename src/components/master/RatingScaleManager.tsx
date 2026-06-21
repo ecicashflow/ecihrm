@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
@@ -343,19 +342,23 @@ export default function RatingScaleManager() {
                           <Button variant="ghost" size="sm" onClick={() => openEdit(scale)} title="Edit">
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
+                          {/* Use a native button (not shadcn Button) to avoid nested-button hydration error with Switch */}
+                          <button
+                            type="button"
                             onClick={() => handleToggleActive(scale)}
                             disabled={togglingId === scale.id}
                             title={scale.isActive ? 'Deactivate' : 'Activate'}
+                            aria-label={scale.isActive ? 'Deactivate rating scale' : 'Activate rating scale'}
+                            className="inline-flex items-center justify-center h-8 px-2 rounded-md hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                           >
                             {togglingId === scale.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              <Switch className="scale-75" checked={scale.isActive} />
+                              <span className={`inline-flex h-[1.15rem] w-8 items-center rounded-full border border-transparent shadow-xs transition-all ${scale.isActive ? 'bg-primary' : 'bg-input'}`}>
+                                <span className={`h-3.5 w-3.5 bg-white rounded-full shadow-sm transition-transform ${scale.isActive ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                              </span>
                             )}
-                          </Button>
+                          </button>
                           <Button
                             variant="ghost"
                             size="sm"

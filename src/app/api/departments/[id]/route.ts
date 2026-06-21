@@ -46,13 +46,22 @@ export async function PUT(
     const body = await request.json();
     const { name } = body;
 
-    if (!name || !name.trim()) {
-      return NextResponse.json({ error: 'Department name is required' }, { status: 400 });
-    }
-
     const existing = await db.department.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json({ error: 'Department not found' }, { status: 404 });
+    }
+
+    // Toggle active status (for the activate/deactivate switch)
+    if (body.isActive !== undefined && name === undefined) {
+      const updated = await db.department.update({
+        where: { id },
+        data: { isActive: body.isActive },
+      });
+      return NextResponse.json(updated);
+    }
+
+    if (!name || !name.trim()) {
+      return NextResponse.json({ error: 'Department name is required' }, { status: 400 });
     }
 
     if (name.trim() !== existing.name) {
@@ -64,7 +73,10 @@ export async function PUT(
 
     const updated = await db.department.update({
       where: { id },
-      data: { name: name.trim() },
+      data: {
+        name: name.trim(),
+        ...(body.isActive !== undefined && { isActive: body.isActive }),
+      },
     });
 
     return NextResponse.json(updated);

@@ -59,6 +59,7 @@ export async function PUT(
         ...(body.ratingScaleId !== undefined && {
           ratingScaleId: body.ratingScaleId || null,
         }),
+        ...(body.isActive !== undefined && { isActive: body.isActive }),
       },
       include: {
         ratingScale: true,

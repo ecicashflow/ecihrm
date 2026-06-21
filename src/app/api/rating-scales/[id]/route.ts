@@ -59,6 +59,7 @@ export async function PUT(
         ...(body.labelsJson !== undefined && { labelsJson: body.labelsJson }),
         ...(body.appliesTo !== undefined && { appliesTo: body.appliesTo }),
         ...(body.sortOrder !== undefined && { sortOrder: Number(body.sortOrder) }),
+        ...(body.isActive !== undefined && { isActive: body.isActive }),
       },
     });
 

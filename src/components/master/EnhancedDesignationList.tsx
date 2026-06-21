@@ -373,19 +373,23 @@ export default function EnhancedDesignationList() {
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
+                          {/* Use a native button (not shadcn Button) to avoid nested-button hydration error with Switch */}
+                          <button
+                            type="button"
                             onClick={() => handleToggleActive(desig)}
                             disabled={togglingId === desig.id}
                             title={desig.isActive ? 'Deactivate' : 'Activate'}
+                            aria-label={desig.isActive ? 'Deactivate designation' : 'Activate designation'}
+                            className="inline-flex items-center justify-center h-8 px-2 rounded-md hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                           >
                             {togglingId === desig.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              <Switch className="scale-75" checked={desig.isActive} />
+                              <span className={`inline-flex h-[1.15rem] w-8 items-center rounded-full border border-transparent shadow-xs transition-all ${desig.isActive ? 'bg-primary' : 'bg-input'}`}>
+                                <span className={`h-3.5 w-3.5 bg-white rounded-full shadow-sm transition-transform ${desig.isActive ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                              </span>
                             )}
-                          </Button>
+                          </button>
                           <Button
                             variant="ghost"
                             size="sm"
