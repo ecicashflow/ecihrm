@@ -69,7 +69,7 @@ interface FilterOption {
 }
 
 export default function EnhancedEmployeeList() {
-  const { setCurrentView, setViewParams, currentUser } = useAppStore();
+  const { setCurrentView, navigate, currentUser } = useAppStore();
   const [employees, setEmployees] = useState<EmployeeDetail[]>([]);
   const [departments, setDepartments] = useState<FilterOption[]>([]);
   const [designations, setDesignations] = useState<FilterOption[]>([]);
@@ -190,8 +190,7 @@ export default function EnhancedEmployeeList() {
   };
 
   const handleRowClick = (emp: EmployeeDetail) => {
-    setViewParams({ id: emp.id });
-    setCurrentView('employee-create');
+    navigate('employee-create', { id: emp.id });
   };
 
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'hr';
@@ -230,8 +229,7 @@ export default function EnhancedEmployeeList() {
           <Button
             className="eci-btn-primary"
             onClick={() => {
-              setViewParams({});
-              setCurrentView('employee-create');
+              navigate('employee-create', {});
             }}
           >
             <Plus className="h-4 w-4 mr-2" />

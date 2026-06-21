@@ -68,11 +68,12 @@ export default function EnhancedEmployeeForm() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [deptRes, desigRes, mgrRes] = await Promise.all([
+        const [deptRes, desigRes, supRes, mgrRes2, adminRes] = await Promise.all([
           fetch('/api/departments'),
           fetch('/api/designations'),
-          // Fetch supervisors, management, and admin users as potential managers
-          fetch('/api/users?role=supervisor&role=management&role=admin'),
+          fetch('/api/users?role=supervisor'),
+          fetch('/api/users?role=management'),
+          fetch('/api/users?role=admin'),
         ]);
         if (deptRes.ok) {
           const data = await deptRes.json();
@@ -88,19 +89,28 @@ export default function EnhancedEmployeeForm() {
             department: d.department || '',
           })));
         }
-        if (mgrRes.ok) {
-          const data = await mgrRes.json();
-          const list = Array.isArray(data) ? data : (data.users || []);
-          setManagers(
-            list
-              .filter((u: { id: string; isActive: boolean }) => u.isActive && u.id !== editId)
-              .map((u: { id: string; name: string; designation: string }) => ({
-                id: u.id,
-                name: u.name,
-                designation: u.designation,
-              }))
-          );
+        // Merge supervisors + management + admin as potential line managers
+        const allManagers: { id: string; name: string; designation: string; isActive: boolean }[] = [];
+        for (const res of [supRes, mgrRes2, adminRes]) {
+          if (res.ok) {
+            const data = await res.json();
+            const list = Array.isArray(data) ? data : (data.users || []);
+            allManagers.push(...list.map((u: { id: string; name: string; designation: string; isActive: boolean }) => ({
+              id: u.id, name: u.name, designation: u.designation, isActive: u.isActive,
+            })));
+          }
         }
+        // Deduplicate by id, filter active, exclude the employee being edited
+        const seen = new Set<string>();
+        setManagers(
+          allManagers
+            .filter((u) => {
+              if (seen.has(u.id)) return false;
+              seen.add(u.id);
+              return u.isActive && u.id !== editId;
+            })
+            .map((u) => ({ id: u.id, name: u.name, designation: u.designation }))
+        );
 
         if (isEdit && editId) {
           const empRes = await fetch(`/api/users/${editId}`);
@@ -124,6 +134,7 @@ export default function EnhancedEmployeeForm() {
               currentEdu: emp.currentEdu || '',
               lineManagerId: emp.lineManagerId || '',
               isActive: emp.isActive,
+              password: '', // Leave blank on edit — server keeps existing password
             });
           } else {
             toast.error('Failed to load employee data');
@@ -190,7 +201,17 @@ export default function EnhancedEmployeeForm() {
       });
 
       if (res.ok) {
-        toast.success(isEdit ? 'Employee updated successfully' : 'Employee created successfully');
+        const savedUser = await res.json();
+        if (isEdit) {
+          toast.success('Employee updated successfully');
+        } else {
+          // Show generated credentials for new employees
+          const generatedPassword = form.password || 'password123';
+          toast.success(
+            `Employee created successfully! Login: ${savedUser.email} / Password: ${generatedPassword}`,
+            { duration: 8000 }
+          );
+        }
         setCurrentView('employees');
       } else {
         const data = await res.json();

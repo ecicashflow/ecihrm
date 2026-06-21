@@ -3,7 +3,6 @@
 import { useAppStore } from '@/store/app-store';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   LayoutDashboard,
   RefreshCw,
@@ -91,17 +90,22 @@ const navGroups: NavGroup[] = [
 ];
 
 export default function AppSidebar() {
-  const { currentUser, currentView, setCurrentView, sidebarOpen, setSidebarOpen, unreadCount } = useAppStore();
+  const { currentUser, currentView, setCurrentView, setViewParams, sidebarOpen, setSidebarOpen, unreadCount } = useAppStore();
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const toggleGroup = (label: string) => {
     setCollapsedGroups((prev) => ({ ...prev, [label]: !prev[label] }));
   };
 
+  const handleNavClick = (view: string) => {
+    setViewParams({}); // Clear stale params when switching to a top-level view
+    setCurrentView(view as 'dashboard');
+  };
+
   return (
     <aside className="w-64 bg-sidebar text-sidebar-foreground flex flex-col h-screen sticky top-0 shrink-0">
       {/* Logo */}
-      <div className="p-4 flex items-center gap-3 border-b border-sidebar-border">
+      <div className="p-4 flex items-center gap-3 border-b border-sidebar-border shrink-0">
         <img src="/eci-logo.jpg" alt="ECI" className="w-9 h-9 object-contain" />
         <div className="min-w-0">
           <p className="font-bold text-sm truncate">ECI HRM</p>
@@ -109,9 +113,9 @@ export default function AppSidebar() {
         </div>
       </div>
 
-      {/* Nav */}
-      <ScrollArea className="flex-1 py-2">
-        <nav className="space-y-1 px-2">
+      {/* Nav — scrollable area */}
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 eci-scroll">
+        <div className="space-y-1 px-2">
           {navGroups.map((group) => {
             const visibleItems = group.items.filter(
               (item) => !currentUser || item.roles.includes(currentUser.role)
@@ -153,7 +157,7 @@ export default function AppSidebar() {
                               ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
                               : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
                           )}
-                          onClick={() => setCurrentView(item.view as 'dashboard')}
+                          onClick={() => handleNavClick(item.view)}
                         >
                           <item.icon className="h-4 w-4 shrink-0" />
                           <span className="truncate">{item.label}</span>
@@ -170,11 +174,11 @@ export default function AppSidebar() {
               </div>
             );
           })}
-        </nav>
-      </ScrollArea>
+        </div>
+      </nav>
 
       {/* Collapse toggle */}
-      <div className="p-2 border-t border-sidebar-border">
+      <div className="p-2 border-t border-sidebar-border shrink-0">
         <Button
           variant="ghost"
           size="sm"

@@ -35,6 +35,7 @@ const AppraisalView = lazy(() => import('@/components/appraisal/AppraisalView'))
 const NotificationPanel = lazy(() => import('@/components/notifications/NotificationPanel'));
 const ReportViewer = lazy(() => import('@/components/reports/ReportViewer'));
 const AuditLogViewer = lazy(() => import('@/components/reports/AuditLogViewer'));
+const SettingsView = lazy(() => import('@/components/settings/SettingsView'));
 
 // Simple loading spinner for lazy-loaded components
 function ViewLoader() {
@@ -104,23 +105,12 @@ function ViewRouter() {
           case 'audit-logs':
             return <AuditLogViewer />;
           case 'settings':
-            return <SettingsPlaceholder />;
+            return <SettingsView />;
           default:
             return <DashboardRouter />;
         }
       })()}
     </Suspense>
-  );
-}
-
-function SettingsPlaceholder() {
-  return (
-    <div className="flex items-center justify-center py-20">
-      <div className="text-center text-muted-foreground">
-        <p className="text-lg font-medium">Settings</p>
-        <p className="text-sm mt-1">Settings page coming soon.</p>
-      </div>
-    </div>
   );
 }
 

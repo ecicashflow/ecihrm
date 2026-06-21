@@ -11,6 +11,8 @@ interface AppState {
   // Navigation
   currentView: AppView;
   setCurrentView: (view: AppView) => void;
+  /** Navigate to a view with optional params — sets both atomically (no race condition). */
+  navigate: (view: AppView, params?: Record<string, string>) => void;
   viewParams: Record<string, string>;
   setViewParams: (params: Record<string, string>) => void;
   sidebarOpen: boolean;
@@ -42,7 +44,12 @@ export const useAppStore = create<AppState>((set) => ({
   setIsLoggedIn: (v) => set({ isLoggedIn: v }),
 
   currentView: 'login',
-  setCurrentView: (view) => set({ currentView: view, viewParams: {} }),
+  // NOTE: setCurrentView does NOT clear viewParams anymore.
+  // This fixes the race condition where setViewParams() followed by
+  // setCurrentView() would lose the params. Use navigate(view, params)
+  // for new code, or explicitly call setViewParams({}) to clear.
+  setCurrentView: (view) => set({ currentView: view }),
+  navigate: (view, params) => set({ currentView: view, viewParams: params || {} }),
   viewParams: {},
   setViewParams: (params) => set({ viewParams: params }),
   sidebarOpen: true,

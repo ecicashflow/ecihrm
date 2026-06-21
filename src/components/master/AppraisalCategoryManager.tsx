@@ -102,7 +102,8 @@ export default function AppraisalCategoryManager() {
       const res = await fetch('/api/appraisal-categories');
       if (res.ok) {
         const data = await res.json();
-        setCategories(data.categories || data || []);
+        // API returns { appraisalCategories: [...] }
+        setCategories(data.appraisalCategories || data.categories || []);
       }
     } catch {
       // Server unavailable - show empty state gracefully
@@ -118,7 +119,8 @@ export default function AppraisalCategoryManager() {
       const res = await fetch('/api/rating-scales');
       if (res.ok) {
         const data = await res.json();
-        setRatingScales(data.ratingScales || data || []);
+        // API returns { ratingScales: [...] }
+        setRatingScales(data.ratingScales || data.scales || []);
       }
     } catch { /* ignore */ }
   }, []);

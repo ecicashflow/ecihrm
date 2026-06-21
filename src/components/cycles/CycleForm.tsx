@@ -42,7 +42,7 @@ interface Supervisor {
 }
 
 export default function CycleForm() {
-  const { setCurrentView } = useAppStore();
+  const { setCurrentView, currentUser } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activating, setActivating] = useState(false);
@@ -59,6 +59,7 @@ export default function CycleForm() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [submissionDeadline, setSubmissionDeadline] = useState('');
+  // Store department NAMES (not IDs) so they match employee.department
   const [selectedDepts, setSelectedDepts] = useState<string[]>([]);
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [supervisorMap, setSupervisorMap] = useState<Record<string, string>>({});
@@ -67,14 +68,51 @@ export default function CycleForm() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [deptRes, empRes, supRes] = await Promise.all([
+        const [deptRes, empRes, sup1Res, sup2Res, adminRes] = await Promise.all([
           fetch('/api/departments'),
-          fetch('/api/users?role=employee'),
+          fetch('/api/users?includeInactive=false'),
           fetch('/api/users?role=supervisor'),
+          fetch('/api/users?role=management'),
+          fetch('/api/users?role=admin'),
         ]);
-        if (deptRes.ok) setDepartments((await deptRes.json()).departments || []);
-        if (empRes.ok) setEmployees((await empRes.json()).users || []);
-        if (supRes.ok) setSupervisors((await supRes.json()).users || []);
+        if (deptRes.ok) {
+          const data = await deptRes.json();
+          setDepartments(data.departments || data || []);
+        }
+        // Users API returns an array directly
+        if (empRes.ok) {
+          const data = await empRes.json();
+          const list = Array.isArray(data) ? data : (data.users || []);
+          // Only show active employees (exclude admin/management who are just managers)
+          setEmployees(
+            list
+              .filter((u: Employee & { isActive: boolean }) => u.isActive)
+              .map((u: Employee) => ({
+                id: u.id, name: u.name, employeeId: u.employeeId,
+                designation: u.designation, department: u.department,
+                lineManagerId: u.lineManagerId,
+                lineManager: u.lineManager,
+              }))
+          );
+        }
+        // Merge supervisors + management + admin as potential supervisors
+        const allSups: Supervisor[] = [];
+        for (const res of [sup1Res, sup2Res, adminRes]) {
+          if (res.ok) {
+            const data = await res.json();
+            const list = Array.isArray(data) ? data : (data.users || []);
+            allSups.push(...list.map((u: Supervisor & { isActive: boolean }) => ({
+              id: u.id, name: u.name, designation: u.designation,
+            })));
+          }
+        }
+        // Deduplicate
+        const seen = new Set<string>();
+        setSupervisors(allSups.filter((s) => {
+          if (seen.has(s.id)) return false;
+          seen.add(s.id);
+          return true;
+        }));
       } catch {
         // Server unavailable - use empty data gracefully
         console.warn('Server unavailable, using empty data for cycle form');
@@ -88,9 +126,9 @@ export default function CycleForm() {
     fetchData();
   }, []);
 
-  const toggleDept = (deptId: string) => {
+  const toggleDept = (deptName: string) => {
     setSelectedDepts((prev) =>
-      prev.includes(deptId) ? prev.filter((d) => d !== deptId) : [...prev, deptId]
+      prev.includes(deptName) ? prev.filter((d) => d !== deptName) : [...prev, deptName]
     );
   };
 
@@ -152,10 +190,21 @@ export default function CycleForm() {
       return;
     }
 
+    if (!currentUser?.id) {
+      toast.error('You must be logged in to create a cycle');
+      return;
+    }
+
     if (activate) setActivating(true);
     else setSaving(true);
 
     try {
+      // Format period dates as readable strings (e.g., "January 2025")
+      const formatDateStr = (dateStr: string) => {
+        const d = new Date(dateStr);
+        return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      };
+
       const res = await fetch('/api/cycles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -163,27 +212,44 @@ export default function CycleForm() {
           name,
           cycleType,
           year,
-          periodFrom,
-          periodTo,
+          periodFrom: formatDateStr(periodFrom),
+          periodTo: formatDateStr(periodTo),
           startDate,
           endDate,
           submissionDeadline,
-          departmentIds: selectedDepts,
-          employeeIds: selectedEmployees,
-          supervisorMap,
+          applicableDepts: selectedDepts, // Send department NAMES
+          createdById: currentUser.id,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
+        // POST /api/cycles returns the cycle object directly (spread, not wrapped)
+        const cycleId = data.id;
+        if (!cycleId) {
+          toast.error('Cycle created but failed to get cycle ID');
+          setCurrentView('cycles');
+          return;
+        }
         if (activate) {
-          const actRes = await fetch(`/api/cycles/${data.cycle.id}/activate`, { method: 'POST' });
+          const actRes = await fetch(`/api/cycles/${cycleId}/activate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              employeeIds: selectedEmployees,
+              supervisorMap,
+            }),
+          });
           if (actRes.ok) {
-            toast.success('Cycle created and activated successfully');
+            const actData = await actRes.json();
+            toast.success(`Cycle created and activated! ${actData.assignmentsCreated || 0} appraisal assignments created.`);
             setCurrentView('cycles');
             return;
           } else {
-            toast.error('Cycle created but activation failed');
+            const actData = await actRes.json().catch(() => ({}));
+            toast.error(`Cycle created but activation failed: ${actData.error || 'Unknown error'}`);
+            setCurrentView('cycles');
+            return;
           }
         } else {
           toast.success('Cycle saved as draft');
@@ -284,14 +350,14 @@ export default function CycleForm() {
               <label
                 key={dept.id}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
-                  selectedDepts.includes(dept.id)
+                  selectedDepts.includes(dept.name)
                     ? 'border-eci-blue bg-eci-blue/5 text-eci-blue'
                     : 'border-border hover:bg-muted/50'
                 }`}
               >
                 <Checkbox
-                  checked={selectedDepts.includes(dept.id)}
-                  onCheckedChange={() => toggleDept(dept.id)}
+                  checked={selectedDepts.includes(dept.name)}
+                  onCheckedChange={() => toggleDept(dept.name)}
                 />
                 <span className="text-sm font-medium">{dept.name}</span>
               </label>
