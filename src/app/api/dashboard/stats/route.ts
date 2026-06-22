@@ -241,7 +241,7 @@ async function getSupervisorStats(userId: string, activeCyclesCount: number) {
   const myCurrent = myActiveAssignments.find(
     (a) => a.status !== 'approved' && a.status !== 'acknowledged_by_employee' && a.status !== 'closed'
   );
-  let myCurrentAssignment = null;
+  let myCurrentAssignment: Record<string, unknown> | null = null;
   if (myCurrent) {
     myCurrentAssignment = {
       id: myCurrent.id,
@@ -320,7 +320,7 @@ async function getEmployeeStats(userId: string, activeCyclesCount: number) {
   const current = activeAssignments.find(
     (a) => a.status !== 'approved' && a.status !== 'acknowledged_by_employee' && a.status !== 'closed'
   );
-  let currentAssignment = null;
+  let currentAssignment: Record<string, unknown> | null = null;
   if (current) {
     currentAssignment = {
       id: current.id,

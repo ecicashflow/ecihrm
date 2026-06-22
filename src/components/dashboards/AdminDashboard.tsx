@@ -72,9 +72,10 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!currentUser) return;
+    const uid = currentUser.id;
     async function fetchData() {
       try {
-        const res = await fetch(`/api/dashboard/stats?userId=${currentUser.id}&role=admin`);
+        const res = await fetch(`/api/dashboard/stats?userId=${uid}&role=admin`);
         if (res.ok) {
           const data = await res.json();
           setStats(data);

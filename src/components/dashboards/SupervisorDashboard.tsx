@@ -83,9 +83,10 @@ export default function SupervisorDashboard() {
 
   useEffect(() => {
     if (!currentUser) return;
+    const uid = currentUser.id;
     async function fetchData() {
       try {
-        const res = await fetch(`/api/dashboard/stats?userId=${currentUser.id}&role=supervisor`);
+        const res = await fetch(`/api/dashboard/stats?userId=${uid}&role=supervisor`);
         if (res.ok) {
           const data = await res.json();
           setStats(data);

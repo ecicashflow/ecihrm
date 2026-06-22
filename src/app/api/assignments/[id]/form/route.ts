@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { createDefaultFormData, calculateAppraisalScores } from '@/lib/constants';
+import { requireAuth } from '@/lib/auth-guard';
 
+/**
+ * GET /api/assignments/[id]/form
+ * Returns the appraisal form data. If no form data exists yet, creates a
+ * default record populated from the employee + designation + cycle records.
+ */
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -96,6 +102,63 @@ export async function GET(
   }
 }
 
+/**
+ * Merge helper: for arrays of rating items, preserve the existing
+ * employeeRating and only update supervisorRating (and vice versa).
+ */
+function mergeRatingArrays(
+  existing: any[],
+  incoming: any[],
+  preserveKey: 'employeeRating' | 'supervisorRating'
+): any[] {
+  if (!Array.isArray(existing) || !Array.isArray(incoming)) {
+    return incoming || existing || [];
+  }
+  const maxLen = Math.max(existing.length, incoming.length);
+  const result: any[] = [];
+  for (let i = 0; i < maxLen; i++) {
+    const ex = existing[i] || {};
+    const inc = incoming[i] || {};
+    result.push({
+      ...ex,       // start with existing (preserves all data)
+      ...inc,      // overlay incoming
+      // But force-preserve the key that belongs to the OTHER role:
+      [preserveKey]: ex[preserveKey] !== undefined ? ex[preserveKey] : (inc[preserveKey] ?? 0),
+    });
+  }
+  return result;
+}
+
+/**
+ * Merge remarks: preserve the other role's fields.
+ */
+function mergeRemarks(
+  existing: Record<string, any>,
+  incoming: Record<string, any>,
+  currentStage: string
+): Record<string, any> {
+  const merged = { ...existing, ...incoming };
+  // If supervisor is saving, preserve HR fields
+  if (currentStage === 'supervisor') {
+    const hrFields = ['hrSatisfactionSkills', 'hrSatisfactionBehavior', 'hrSatisfactionPerformance',
+                      'hrRecommendationMonitoring', 'hrRecommendationPromotion', 'hrRecommendationReward',
+                      'hrGeneralRemarks'];
+    for (const f of hrFields) {
+      if (existing[f] !== undefined) merged[f] = existing[f];
+    }
+  }
+  // If HR is saving, preserve supervisor fields
+  if (currentStage === 'hr') {
+    const supFields = ['supervisorSatisfaction', 'supervisorConsiderationPromotion',
+                       'supervisorConsiderationIncrement', 'supervisorConsiderationReward',
+                       'supervisorGeneralRemarks'];
+    for (const f of supFields) {
+      if (existing[f] !== undefined) merged[f] = existing[f];
+    }
+  }
+  return merged;
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -106,87 +169,174 @@ export async function PUT(
 
     const assignment = await db.appraisalAssignment.findUnique({
       where: { id },
+      include: {
+        employee: { select: { id: true, name: true } },
+      },
     });
 
     if (!assignment) {
       return NextResponse.json({ error: 'Assignment not found' }, { status: 404 });
     }
 
-    // Authorization: verify the caller has the right to save (optional callerId for backward compatibility)
-    const callerId = body.callerId;
-    if (callerId) {
-      const isEmployee = assignment.employeeId === callerId;
-      const isSupervisor = assignment.supervisorId === callerId || assignment.escalatedSupervisorId === callerId;
-      const isHR = assignment.currentActionBy === 'hr';
-      const isManagement = assignment.currentActionBy === 'management';
+    // ── STRICT AUTHORIZATION: only the current stage's role can save ──
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const callerId = auth.userId!;
+    const callerRole = auth.role!;
 
-      if (assignment.currentActionBy === 'employee' && !isEmployee) {
-        return NextResponse.json({ error: 'Only the employee can edit during their phase' }, { status: 403 });
-      }
-      if (assignment.currentActionBy === 'supervisor' && !isSupervisor && !isHR && !isManagement) {
-        return NextResponse.json({ error: 'Only the assigned supervisor can edit during their phase' }, { status: 403 });
-      }
+    const isEmployee = assignment.employeeId === callerId;
+    const isSupervisor =
+      (assignment.supervisorId === callerId || assignment.escalatedSupervisorId === callerId) &&
+      !isEmployee;
+    const isHR = callerRole === 'hr';
+    const isManagement = callerRole === 'management';
+
+    const STAGE_AUTH: Record<string, boolean> = {
+      employee: isEmployee,
+      supervisor: isSupervisor,
+      hr: isHR,
+      management: isManagement,
+    };
+
+    const canEdit = STAGE_AUTH[assignment.currentActionBy] ?? false;
+    if (!canEdit) {
+      const stageLabels: Record<string, string> = {
+        employee: 'employee self-evaluation',
+        supervisor: 'supervisor review',
+        hr: 'HR review',
+        management: 'management review',
+      };
+      return NextResponse.json(
+        {
+          error: `This appraisal is currently in the ${stageLabels[assignment.currentActionBy] || assignment.currentActionBy} stage. Only the designated person for that stage can edit the form.`,
+        },
+        { status: 403 }
+      );
     }
 
+    const currentStage = assignment.currentActionBy;
     let formData = await db.appraisalFormData.findUnique({
       where: { assignmentId: id },
     });
 
-    // Build update data
+    // Parse existing data for merging
+    const existing = formData ? {
+      achievements: JSON.parse(formData.achievementsJson),
+      goals: JSON.parse(formData.goalsJson),
+      technicalSkills: JSON.parse(formData.technicalSkillsJson),
+      leadershipSkills: JSON.parse(formData.leadershipSkillsJson),
+      managerialSkills: JSON.parse(formData.managerialSkillsJson),
+      explanations: JSON.parse(formData.explanationsJson),
+      futureGoals: JSON.parse(formData.futureGoalsJson),
+      remarks: JSON.parse(formData.remarksJson),
+    } : null;
+
+    // ── STAGE-AWARE MERGING ──
+    // Each stage only updates its own fields, preserving data from other stages.
     const updateData: Record<string, unknown> = {};
 
-    // Handle JSON array fields
-    if (body.achievements !== undefined) {
-      updateData.achievementsJson = JSON.stringify(body.achievements);
-    }
-    if (body.goals !== undefined) {
-      updateData.goalsJson = JSON.stringify(body.goals);
-    }
-    if (body.technicalSkills !== undefined) {
-      updateData.technicalSkillsJson = JSON.stringify(body.technicalSkills);
-    }
-    if (body.leadershipSkills !== undefined) {
-      updateData.leadershipSkillsJson = JSON.stringify(body.leadershipSkills);
-    }
-    if (body.managerialSkills !== undefined) {
-      updateData.managerialSkillsJson = JSON.stringify(body.managerialSkills);
-    }
-    if (body.explanations !== undefined) {
-      updateData.explanationsJson = JSON.stringify(body.explanations);
-    }
-    if (body.futureGoals !== undefined) {
-      updateData.futureGoalsJson = JSON.stringify(body.futureGoals);
-    }
-    if (body.remarks !== undefined) {
-      updateData.remarksJson = JSON.stringify(body.remarks);
-    }
-    if (body.employeeSignature !== undefined) {
-      updateData.employeeSignature = body.employeeSignature;
-    }
-    if (body.employeeSignatureDate !== undefined) {
-      updateData.employeeSignatureDate = body.employeeSignatureDate || null;
-    }
-    if (body.supervisorSignature !== undefined) {
-      updateData.supervisorSignature = body.supervisorSignature;
-    }
-    if (body.supervisorSignatureDate !== undefined) {
-      updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
-    }
-    if (body.ceoSignature !== undefined) {
-      updateData.ceoSignature = body.ceoSignature;
-    }
-    if (body.ceoSignatureDate !== undefined) {
-      updateData.ceoSignatureDate = body.ceoSignatureDate || null;
+    if (currentStage === 'employee') {
+      // Employee can edit: descriptions, employeeRating, futureGoals, explanations, employeeSignature
+      if (body.achievements !== undefined) {
+        updateData.achievementsJson = JSON.stringify(body.achievements);
+      }
+      if (body.goals !== undefined) {
+        updateData.goalsJson = JSON.stringify(body.goals);
+      }
+      if (body.technicalSkills !== undefined) {
+        // Merge: preserve supervisorRating from existing, use new employeeRating
+        const merged = existing ? mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'supervisorRating') : body.technicalSkills;
+        updateData.technicalSkillsJson = JSON.stringify(merged);
+      }
+      if (body.leadershipSkills !== undefined) {
+        const merged = existing ? mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'supervisorRating') : body.leadershipSkills;
+        updateData.leadershipSkillsJson = JSON.stringify(merged);
+      }
+      if (body.managerialSkills !== undefined) {
+        const merged = existing ? mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'supervisorRating') : body.managerialSkills;
+        updateData.managerialSkillsJson = JSON.stringify(merged);
+      }
+      if (body.explanations !== undefined) {
+        updateData.explanationsJson = JSON.stringify(body.explanations);
+      }
+      if (body.futureGoals !== undefined) {
+        updateData.futureGoalsJson = JSON.stringify(body.futureGoals);
+      }
+      if (body.employeeSignature !== undefined) {
+        updateData.employeeSignature = body.employeeSignature;
+      }
+      if (body.employeeSignatureDate !== undefined) {
+        updateData.employeeSignatureDate = body.employeeSignatureDate || null;
+      }
+    } else if (currentStage === 'supervisor') {
+      // Supervisor can edit: supervisorRating in all arrays, supervisorSignature, supervisor remarks
+      if (body.achievements !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.achievements, body.achievements, 'employeeRating');
+        updateData.achievementsJson = JSON.stringify(merged);
+      }
+      if (body.goals !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.goals, body.goals, 'employeeRating');
+        updateData.goalsJson = JSON.stringify(merged);
+      }
+      if (body.technicalSkills !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'employeeRating');
+        updateData.technicalSkillsJson = JSON.stringify(merged);
+      }
+      if (body.leadershipSkills !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'employeeRating');
+        updateData.leadershipSkillsJson = JSON.stringify(merged);
+      }
+      if (body.managerialSkills !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'employeeRating');
+        updateData.managerialSkillsJson = JSON.stringify(merged);
+      }
+      if (body.explanations !== undefined && existing) {
+        // Preserve employee data, update supervisor fields
+        updateData.explanationsJson = JSON.stringify(body.explanations);
+      }
+      if (body.supervisorSignature !== undefined) {
+        updateData.supervisorSignature = body.supervisorSignature;
+      }
+      if (body.supervisorSignatureDate !== undefined) {
+        updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
+      }
+      if (body.remarks !== undefined && existing) {
+        const merged = mergeRemarks(existing.remarks, body.remarks, 'supervisor');
+        updateData.remarksJson = JSON.stringify(merged);
+      }
+    } else if (currentStage === 'hr') {
+      // HR can edit: HR remarks, explanations (HR remarks on explanations)
+      if (body.remarks !== undefined && existing) {
+        const merged = mergeRemarks(existing.remarks, body.remarks, 'hr');
+        updateData.remarksJson = JSON.stringify(merged);
+      }
+      if (body.explanations !== undefined && existing) {
+        // HR can update explanation ratings/remarks, but preserve descriptions
+        updateData.explanationsJson = JSON.stringify(body.explanations);
+      }
+    } else if (currentStage === 'management') {
+      // Management can edit: CEO signature
+      if (body.ceoSignature !== undefined) {
+        updateData.ceoSignature = body.ceoSignature;
+      }
+      if (body.ceoSignatureDate !== undefined) {
+        updateData.ceoSignatureDate = body.ceoSignatureDate || null;
+      }
+      if (body.remarks !== undefined && existing) {
+        // Management remarks — preserve everything else
+        updateData.remarksJson = JSON.stringify(body.remarks);
+      }
     }
 
-    // Calculate scores for employee ratings
+    // ── Recalculate scores using MERGED data ──
+    // Use the final merged arrays (existing + updates) for calculation
     const formForCalc = {
-      achievements: body.achievements ? JSON.parse(JSON.stringify(body.achievements)) : formData ? JSON.parse(formData.achievementsJson) : [],
-      goals: body.goals ? JSON.parse(JSON.stringify(body.goals)) : formData ? JSON.parse(formData.goalsJson) : [],
-      technicalSkills: body.technicalSkills ? JSON.parse(JSON.stringify(body.technicalSkills)) : formData ? JSON.parse(formData.technicalSkillsJson) : [],
-      leadershipSkills: body.leadershipSkills ? JSON.parse(JSON.stringify(body.leadershipSkills)) : formData ? JSON.parse(formData.leadershipSkillsJson) : [],
-      managerialSkills: body.managerialSkills ? JSON.parse(JSON.stringify(body.managerialSkills)) : formData ? JSON.parse(formData.managerialSkillsJson) : [],
-      explanations: body.explanations ? JSON.parse(JSON.stringify(body.explanations)) : formData ? JSON.parse(formData.explanationsJson) : [],
+      achievements: updateData.achievementsJson ? JSON.parse(updateData.achievementsJson as string) : (existing?.achievements || []),
+      goals: updateData.goalsJson ? JSON.parse(updateData.goalsJson as string) : (existing?.goals || []),
+      technicalSkills: updateData.technicalSkillsJson ? JSON.parse(updateData.technicalSkillsJson as string) : (existing?.technicalSkills || []),
+      leadershipSkills: updateData.leadershipSkillsJson ? JSON.parse(updateData.leadershipSkillsJson as string) : (existing?.leadershipSkills || []),
+      managerialSkills: updateData.managerialSkillsJson ? JSON.parse(updateData.managerialSkillsJson as string) : (existing?.managerialSkills || []),
+      explanations: updateData.explanationsJson ? JSON.parse(updateData.explanationsJson as string) : (existing?.explanations || []),
     };
 
     const empScores = calculateAppraisalScores(formForCalc, 'employee');
@@ -208,7 +358,6 @@ export async function PUT(
     updateData.overallPercentageEmployee = empScores.overallPercentage;
     updateData.ratingEmployee = empScores.rating;
 
-    // Calculate supervisor scores
     const supScores = calculateAppraisalScores(formForCalc, 'supervisor');
     updateData.achievementsSubtotalSupervisor = supScores.marksGoals;
     updateData.technicalSubtotalSupervisor = supScores.techSubtotal;
@@ -224,13 +373,12 @@ export async function PUT(
     updateData.ratingSupervisor = supScores.rating;
 
     if (formData) {
-      // Update existing
       formData = await db.appraisalFormData.update({
         where: { assignmentId: id },
         data: updateData,
       });
     } else {
-      // Create new (shouldn't normally happen via PUT, but handle it)
+      // Create new with the merged data
       const assignmentData = await db.appraisalAssignment.findUnique({
         where: { id },
         include: {

@@ -59,8 +59,8 @@ async function generateSummary(cycleId: string) {
 - Total Appraisals: ${assignments.length}
 
 ## Employee Appraisal Results
-${employeeSummaries.map((e: { name: string; department: string; designation: string; empPercentage: number; empRating: string; supPercentage: number; supRating: string; status: string }, i: number) =>
-    `${i + 1}. ${e.name} (${e.designation}, ${e.department}) - Employee: ${e.empPercentage}% (${e.empRating}), Supervisor: ${e.supPercentage}% (${e.supRating}), Status: ${e.status}`
+${employeeSummaries.map((e, i) =>
+    `${i + 1}. ${e.name} (${'designation' in e ? e.designation : 'N/A'}, ${e.department}) - Employee: ${'empPercentage' in e ? e.empPercentage : 'N/A'}% (${'empRating' in e ? e.empRating : 'N/A'}), Supervisor: ${'supPercentage' in e ? e.supPercentage : 'N/A'}% (${'supRating' in e ? e.supRating : 'N/A'}), Status: ${e.status}`
   ).join('\n')}
 
 Please provide a structured analysis in plain text with these sections:

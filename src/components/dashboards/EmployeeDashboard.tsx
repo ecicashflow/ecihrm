@@ -57,9 +57,10 @@ export default function EmployeeDashboard() {
 
   useEffect(() => {
     if (!currentUser) return;
+    const uid = currentUser.id;
     async function fetchData() {
       try {
-        const res = await fetch(`/api/dashboard/stats?userId=${currentUser.id}&role=employee`);
+        const res = await fetch(`/api/dashboard/stats?userId=${uid}&role=employee`);
         if (res.ok) {
           const data = await res.json();
           setStats(data);

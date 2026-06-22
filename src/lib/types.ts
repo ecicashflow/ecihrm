@@ -156,13 +156,34 @@ export interface AuditLogItem {
 export interface DashboardStats {
   activeCycles: number;
   totalAssigned: number;
+  totalEmployees?: number;
+  totalAppraisals?: number;
   submittedAppraisals: number;
   pendingAppraisals: number;
   overdueAppraisals: number;
   returnedCases: number;
   approvedAppraisals: number;
-  departmentProgress: { name: string; total: number; completed: number }[];
-  supervisorProgress: { name: string; total: number; completed: number }[];
+  pendingApproval?: number;
+  departmentProgress?: { name: string; total: number; completed: number }[];
+  supervisorProgress?: { name: string; total: number; completed: number }[];
+  ratingDistribution?: { name: string; value: number; color: string }[];
+  topPerformers?: { name: string; department: string; score: number }[];
+  needsImprovement?: { name: string; department: string; score: number }[];
+  approvalQueue?: { id: string; employeeName: string; department: string; cycleName: string; score: number }[];
+  teamMembers?: number;
+  pendingEvaluations?: number;
+  submittedEvaluations?: number;
+  approvedEvaluations?: number;
+  teamMembersList?: { id: string; name: string; designation: string; department: string; assignmentStatus: string; assignmentId: string }[];
+  teamPerformance?: { name: string; score: number }[];
+  myAppraisal?: {
+    currentAssignment: { id: string; status: string; deadline: string | null; cycleName: string; cycleType: string; periodFrom: string; periodTo: string } | null;
+    pendingCount: number;
+    submittedCount: number;
+    history: { id: string; cycleName: string; year: string; cycleType: string; status: string; periodFrom: string; periodTo: string; overallScore: number; rating: string }[];
+  };
+  currentAssignment?: { id: string; status: string; deadline: string | null; cycleName: string; cycleType: string; periodFrom: string; periodTo: string } | null;
+  appraisalHistory?: { id: string; cycleName: string; year: string; cycleType: string; status: string; periodFrom: string; periodTo: string; overallScore: number; rating: string }[];
 }
 
 export interface CycleDetail {
