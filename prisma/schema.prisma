@@ -6,10 +6,9 @@ generator client {
 }
 
 datasource db {
-  // TEMPORARY: SQLite for local sandbox preview only.
-  // The git-committed (production) version uses "postgresql" + directUrl.
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 model User {
