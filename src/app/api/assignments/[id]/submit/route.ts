@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { requireAuth } from '@/lib/auth-guard';
 
 // Workflow state machine: defines valid transitions
 const WORKFLOW_TRANSITIONS: Record<string, { newStatus: string; nextActionBy: string; timestampField: string }> = {
@@ -94,6 +95,36 @@ export async function POST(
 
     if (!assignment) {
       return NextResponse.json({ error: 'Assignment not found' }, { status: 404 });
+    }
+
+    // ── STRICT AUTHORIZATION: verify the caller is authorized for this action ──
+    // No bypassing the hierarchy — each stage can only be advanced by the
+    // designated role.
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const callerId = auth.userId!;
+    const callerRole = auth.role!;
+
+    // Map each action to who is allowed to perform it
+    const ACTION_AUTH: Record<string, boolean> = {
+      employee_submit: assignment.employeeId === callerId,
+      supervisor_submit:
+        (assignment.supervisorId === callerId || assignment.escalatedSupervisorId === callerId) &&
+        assignment.employeeId !== callerId,
+      hr_submit: callerRole === 'hr',
+      management_approve: callerRole === 'management',
+      management_return: callerRole === 'management',
+      hr_share: callerRole === 'hr',
+      employee_acknowledge: assignment.employeeId === callerId,
+    };
+
+    if (!ACTION_AUTH[action]) {
+      return NextResponse.json(
+        {
+          error: `You are not authorized to perform '${action}'. This action can only be performed by the designated role for this appraisal stage.`,
+        },
+        { status: 403 }
+      );
     }
 
     // Self-review guard: prevent supervisor from submitting their own review
