@@ -69,10 +69,10 @@ const MOCK_STATS: SupervisorStats = {
     { name: 'Ayesha Khan', score: 90 },
   ],
   teamMembersList: [
-    { id: '5', name: 'Ali Rashid', designation: 'Software Engineer', department: 'Engineering', assignmentStatus: 'employee_review_pending' },
-    { id: '6', name: 'Zainab Malik', designation: 'Financial Analyst', department: 'Finance', assignmentStatus: 'supervisor_review_pending' },
+    { id: '5', name: 'Ali Rashid', designation: 'Software Engineer', department: 'Engineering', assignmentStatus: 'submitted_by_employee' },
+    { id: '6', name: 'Zainab Malik', designation: 'Financial Analyst', department: 'Finance', assignmentStatus: 'under_supervisor_review' },
     { id: '7', name: 'Hassan Ahmed', designation: 'Operations Executive', department: 'Operations', assignmentStatus: 'approved' },
-    { id: '8', name: 'Ayesha Khan', designation: 'Marketing Specialist', department: 'Marketing', assignmentStatus: 'employee_review_pending' },
+    { id: '8', name: 'Ayesha Khan', designation: 'Marketing Specialist', department: 'Marketing', assignmentStatus: 'submitted_by_employee' },
   ],
 };
 
@@ -336,8 +336,10 @@ export default function SupervisorDashboard() {
                               variant="ghost"
                               size="sm"
                               onClick={() => {
-                                setCurrentView('appraisal-form');
-                                setViewParams({ id: member.assignmentId });
+                                if (member.assignmentId) {
+                                  setCurrentView('appraisal-form');
+                                  setViewParams({ id: member.assignmentId });
+                                }
                               }}
                             >
                               <Eye className="h-4 w-4" />

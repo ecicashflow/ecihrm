@@ -149,8 +149,8 @@ export default function EnhancedDesignationList() {
     setEditingDesig(desig);
     setForm({
       title: desig.title,
-      requiredExp: (desig as Record<string, unknown>).requiredExp as string || '',
-      requiredEdu: (desig as Record<string, unknown>).requiredEdu as string || '',
+      requiredExp: (desig as unknown as Record<string, unknown>).requiredExp as string || '',
+      requiredEdu: (desig as unknown as Record<string, unknown>).requiredEdu as string || '',
       department: desig.department,
     });
     setDialogOpen(true);
@@ -226,8 +226,8 @@ export default function EnhancedDesignationList() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: desig.title,
-          requiredExp: (desig as Record<string, unknown>).requiredExp as string || '',
-          requiredEdu: (desig as Record<string, unknown>).requiredEdu as string || '',
+          requiredExp: (desig as unknown as Record<string, unknown>).requiredExp as string || '',
+          requiredEdu: (desig as unknown as Record<string, unknown>).requiredEdu as string || '',
           department: desig.department,
           isActive: !desig.isActive,
         }),
@@ -342,10 +342,10 @@ export default function EnhancedDesignationList() {
                     <TableRow key={desig.id} className={!desig.isActive ? 'opacity-60' : ''}>
                       <TableCell className="font-medium">{desig.title}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {(desig as Record<string, unknown>).requiredExp as string || '-'}
+                        {(desig as unknown as Record<string, unknown>).requiredExp as string || '-'}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {(desig as Record<string, unknown>).requiredEdu as string || '-'}
+                        {(desig as unknown as Record<string, unknown>).requiredEdu as string || '-'}
                       </TableCell>
                       <TableCell className="text-sm">{desig.department || '-'}</TableCell>
                       <TableCell className="text-center">{desig.employeeCount ?? 0}</TableCell>

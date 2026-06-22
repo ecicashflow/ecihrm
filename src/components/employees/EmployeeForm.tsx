@@ -40,7 +40,7 @@ export default function EmployeeForm() {
     overallExp: '',
     yearsWithECI: '',
     currentEdu: '',
-    role: 'employee' as const,
+    role: 'employee' as string,
     lineManagerId: '',
     isActive: true,
   });

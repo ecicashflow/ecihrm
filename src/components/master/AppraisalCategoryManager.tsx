@@ -58,7 +58,7 @@ const SECTION_OPTIONS = [
 ];
 
 const SECTION_FILTERS = [
-  { value: 'all', label: 'All' },
+  { value: 'all', label: 'All', color: '' },
   ...SECTION_OPTIONS,
 ];
 

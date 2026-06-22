@@ -41,7 +41,7 @@ const MOCK_STATS: EmployeeStats = {
   currentAssignment: {
     id: 'demo-assignment-1',
     cycleName: 'Annual Appraisal 2025',
-    status: 'employee_review_pending',
+    status: 'assigned_to_employee',
     deadline: new Date(Date.now() + 14 * 86400000).toISOString(),
   },
   appraisalHistory: [
