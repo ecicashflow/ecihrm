@@ -152,9 +152,9 @@ export async function POST(
         assignmentData.push({
           cycleId: id, employeeId: emp.id, supervisorId,
           escalatedSupervisorId: escalationId,
-          hrReviewerId: hrReviewerId || null,
-          managementReviewerId: managementReviewerId || null,
-          ceoApproverId: ceoApproverId || null,
+          hrReviewerId: hrReviewerId || undefined,
+          managementReviewerId: managementReviewerId || undefined,
+          ceoApproverId: ceoApproverId || undefined,
           status: 'assigned_to_employee', currentActionBy: 'employee',
           deadline: cycle.submissionDeadline,
           appraisalRefNo: refNo,
@@ -162,9 +162,9 @@ export async function POST(
       } else {
         assignmentData.push({
           cycleId: id, employeeId: emp.id, supervisorId,
-          hrReviewerId: hrReviewerId || null,
-          managementReviewerId: managementReviewerId || null,
-          ceoApproverId: ceoApproverId || null,
+          hrReviewerId: hrReviewerId || undefined,
+          managementReviewerId: managementReviewerId || undefined,
+          ceoApproverId: ceoApproverId || undefined,
           status: 'assigned_to_employee', currentActionBy: 'employee',
           deadline: cycle.submissionDeadline,
           appraisalRefNo: refNo,

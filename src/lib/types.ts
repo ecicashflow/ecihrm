@@ -21,7 +21,7 @@ export type AppView =
   | 'login'
   | 'audit-logs';
 
-export type UserRole = 'admin' | 'supervisor' | 'management' | 'employee' | 'hr';
+export type UserRole = 'admin' | 'supervisor' | 'management' | 'employee' | 'hr' | 'ceo';
 
 export type CycleStatus = 'draft' | 'active' | 'closed' | 'archived';
 export type CycleType = 'mid_year' | 'annual';
@@ -34,13 +34,20 @@ export type AppraisalStatus =
   | 'under_hr_review'
   | 'submitted_to_management'
   | 'under_management_review'
+  | 'management_returned_to_hr'
+  | 'submitted_to_ceo'
   | 'returned_for_correction'
+  | 'returned_for_employee_revision'
+  | 'returned_for_supervisor_revision'
+  | 'returned_for_hr_revision'
+  | 'returned_for_management_revision'
+  | 'reopened_by_admin'
   | 'approved'
   | 'shared_with_employee'
   | 'acknowledged_by_employee'
   | 'closed';
 
-export type ActionBy = 'employee' | 'supervisor' | 'hr' | 'management';
+export type ActionBy = 'employee' | 'supervisor' | 'hr' | 'management' | 'ceo';
 
 // Achievement / Goal Item (Section 2)
 export interface AchievementGoalItem {

@@ -291,13 +291,13 @@ function generatePdfHtml(
   <div class="section">
     <h2>7. Remarks & Recommendations</h2>
     <div class="remarks-box">
-      <strong>Supervisor Remarks:</strong> ${remarks.supervisorGeneralRemarks || 'No remarks provided.'}<br>
-      <small>Satisfaction: ${remarks.supervisorSatisfaction === true ? 'Satisfied' : remarks.supervisorSatisfaction === false ? 'Not Satisfied' : '—'} | Promotion: ${remarks.supervisorConsiderationPromotion ? 'Considered' : 'No'} | Increment: ${remarks.supervisorConsiderationIncrement ? 'Considered' : 'No'} | Reward: ${remarks.supervisorConsiderationReward ? 'Considered' : 'No'}</small>
+      <strong>Supervisor Remarks:</strong> ${data.remarks.supervisorGeneralRemarks || 'No remarks provided.'}<br>
+      <small>Satisfaction: ${data.data.remarks.supervisorSatisfaction === true ? 'Satisfied' : data.remarks.supervisorSatisfaction === false ? 'Not Satisfied' : '—'} | Promotion: ${data.data.remarks.supervisorConsiderationPromotion ? 'Considered' : 'No'} | Increment: ${data.data.remarks.supervisorConsiderationIncrement ? 'Considered' : 'No'} | Reward: ${data.data.remarks.supervisorConsiderationReward ? 'Considered' : 'No'}</small>
     </div>
     <div class="remarks-box">
-      <strong>HR Remarks:</strong> ${remarks.hrGeneralRemarks || 'No remarks provided.'}<br>
-      <small>Skills: ${remarks.hrSatisfactionSkills === true ? 'Satisfied' : remarks.hrSatisfactionSkills === false ? 'Not Satisfied' : '—'} | Behavior: ${remarks.hrSatisfactionBehavior === true ? 'Satisfied' : remarks.hrSatisfactionBehavior === false ? 'Not Satisfied' : '—'} | Performance: ${remarks.hrSatisfactionPerformance === true ? 'Satisfied' : remarks.hrSatisfactionPerformance === false ? 'Not Satisfied' : '—'}</small><br>
-      <small>Monitoring: ${remarks.hrRecommendationMonitoring ? 'Yes' : 'No'} | Promotion: ${remarks.hrRecommendationPromotion ? 'Yes' : 'No'} | Reward: ${remarks.hrRecommendationReward ? 'Yes' : 'No'}</small>
+      <strong>HR Remarks:</strong> ${data.remarks.hrGeneralRemarks || 'No remarks provided.'}<br>
+      <small>Skills: ${data.data.remarks.hrSatisfactionSkills === true ? 'Satisfied' : data.remarks.hrSatisfactionSkills === false ? 'Not Satisfied' : '—'} | Behavior: ${data.data.remarks.hrSatisfactionBehavior === true ? 'Satisfied' : data.remarks.hrSatisfactionBehavior === false ? 'Not Satisfied' : '—'} | Performance: ${data.data.remarks.hrSatisfactionPerformance === true ? 'Satisfied' : data.remarks.hrSatisfactionPerformance === false ? 'Not Satisfied' : '—'}</small><br>
+      <small>Monitoring: ${data.data.remarks.hrRecommendationMonitoring ? 'Yes' : 'No'} | Promotion: ${data.data.remarks.hrRecommendationPromotion ? 'Yes' : 'No'} | Reward: ${data.data.remarks.hrRecommendationReward ? 'Yes' : 'No'}</small>
     </div>
   </div>
 
