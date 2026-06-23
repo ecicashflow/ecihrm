@@ -30,6 +30,7 @@ export async function GET(
 
     const { id } = await params;
 
+    // Fetch assignment without nested includes that might fail on old data
     const assignment = await db.appraisalAssignment.findUnique({
       where: { id },
       include: {
@@ -39,21 +40,51 @@ export async function GET(
         },
         supervisor: { select: { id: true, name: true, designation: true } },
         escalatedSupervisor: { select: { id: true, name: true, designation: true } },
-        hrReviewer: { select: { id: true, name: true, designation: true } },
-        managementReviewer: { select: { id: true, name: true, designation: true } },
-        ceoApprover: { select: { id: true, name: true, designation: true } },
         cycle: { select: { id: true, name: true, cycleType: true, year: true, periodFrom: true, periodTo: true } },
         formData: true,
-        auditLogs: {
-          include: { user: { select: { name: true, role: true } } },
-          orderBy: { createdAt: 'asc' },
-        },
-        overrideLogs: {
-          include: { editor: { select: { name: true, role: true } } },
-          orderBy: { createdAt: 'asc' },
-        },
       },
     });
+
+    // Fetch reviewer info separately (they might be null)
+    let hrReviewer: any = null;
+    let managementReviewer: any = null;
+    let ceoApprover: any = null;
+    if (assignment?.hrReviewerId) {
+      hrReviewer = await db.user.findUnique({ where: { id: assignment.hrReviewerId }, select: { id: true, name: true, designation: true } });
+    }
+    if (assignment?.managementReviewerId) {
+      managementReviewer = await db.user.findUnique({ where: { id: assignment.managementReviewerId }, select: { id: true, name: true, designation: true } });
+    }
+    if (assignment?.ceoApproverId) {
+      ceoApprover = await db.user.findUnique({ where: { id: assignment.ceoApproverId }, select: { id: true, name: true, designation: true } });
+    }
+
+    // Fetch audit logs and override logs separately to avoid relation errors
+    let auditLogs: any[] = [];
+    let overrideLogs: any[] = [];
+    try {
+      auditLogs = await db.auditLog.findMany({
+        where: { assignmentId: id },
+        include: { user: { select: { name: true, role: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch { auditLogs = []; }
+    try {
+      overrideLogs = await db.managementOverrideLog.findMany({
+        where: { assignmentId: id },
+        include: { editor: { select: { name: true, role: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch { overrideLogs = []; }
+
+    // Attach the fetched relations
+    if (assignment) {
+      (assignment as any).hrReviewer = hrReviewer;
+      (assignment as any).managementReviewer = managementReviewer;
+      (assignment as any).ceoApprover = ceoApprover;
+      (assignment as any).auditLogs = auditLogs;
+      (assignment as any).overrideLogs = overrideLogs;
+    }
 
     if (!assignment) {
       return NextResponse.json({ error: 'Assignment not found' }, { status: 404 });
