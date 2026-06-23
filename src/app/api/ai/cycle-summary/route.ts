@@ -63,16 +63,20 @@ ${employeeSummaries.map((e, i) =>
     `${i + 1}. ${e.name} (${'designation' in e ? e.designation : 'N/A'}, ${e.department}) - Employee: ${'empPercentage' in e ? e.empPercentage : 'N/A'}% (${'empRating' in e ? e.empRating : 'N/A'}), Supervisor: ${'supPercentage' in e ? e.supPercentage : 'N/A'}% (${'supRating' in e ? e.supRating : 'N/A'}), Status: ${e.status}`
   ).join('\n')}
 
-Please provide a structured analysis in plain text with these sections:
-1. Cycle Overview (2-3 sentences)
-2. Overall Statistics (average scores, completion rate)
-3. Department Analysis
-4. Key Findings (3-5 points)
-5. Recommendations (3-5 points)
-6. Top Performers (employees with score > 80%)
-7. Needs Attention (employees with score < 50%)
+Please provide a structured management report in plain text with these sections:
+1. Executive Summary (2-3 sentences summarizing overall cycle performance)
+2. Overall Statistics (average scores, completion rate, total appraisals, pending count)
+3. Department Performance Analysis (compare departments by average scores and completion rates)
+4. Employee Strengths (common strengths observed across high-performing employees)
+5. Development Areas (common improvement areas for employees needing attention)
+6. Reviewer Score Variance (analyze gaps between employee self-ratings and supervisor ratings — flag significant mismatches)
+7. Workflow Bottlenecks (identify stages with delays, pending appraisals stuck at each stage)
+8. Training Needs (recommend specific training programs based on competency gaps)
+9. Management Action Recommendations (3-5 specific, actionable recommendations for leadership)
+10. Top Performers (employees with score > 80%)
+11. Needs Attention (employees with score < 50% or with large supervisor-employee score gaps)
 
-Keep it concise and actionable.`;
+Keep it concise, data-driven, and actionable. Use the actual scores and data provided above.`;
 
   const aiResponse = await getLLMResponse([
     { role: 'user', content: prompt },
@@ -90,13 +94,13 @@ Keep it concise and actionable.`;
 // GET - Auto-find active cycle and generate summary
 export async function GET(request: NextRequest) {
   try {
-    // AI features are admin-only
-    const auth = await requireRole(request, ['admin']);
+    // AI reporting: admin, HR, and management can access
+    const auth = await requireRole(request, ['admin', 'hr', 'management']);
     if (auth.error) return auth.error;
 
     if (!aiEnabled()) {
       return NextResponse.json(
-        { error: 'AI features are not configured. Set OPENAI_API_KEY in the server environment.' },
+        { error: 'AI features are not configured. Set AI_API_KEY in the server environment.' },
         { status: 503 }
       );
     }
@@ -126,12 +130,12 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // AI features are admin-only
-    const auth = await requireRole(request, ['admin']);
+    const auth = await requireRole(request, ['admin', 'hr', 'management']);
     if (auth.error) return auth.error;
 
     if (!aiEnabled()) {
       return NextResponse.json(
-        { error: 'AI features are not configured. Set OPENAI_API_KEY in the server environment.' },
+        { error: 'AI features are not configured. Set AI_API_KEY in the server environment.' },
         { status: 503 }
       );
     }

@@ -7,12 +7,13 @@ import { requireRole } from '@/lib/auth-guard';
 export async function POST(request: NextRequest) {
   try {
     // AI features are admin-only — all reporting and analysis is monitored by the administrator
-    const auth = await requireRole(request, ['admin']);
+    // AI analysis: admin, HR, and management can access
+    const auth = await requireRole(request, ['admin', 'hr', 'management']);
     if (auth.error) return auth.error;
 
     if (!aiEnabled()) {
       return NextResponse.json(
-        { error: 'AI features are not configured. Set OPENAI_API_KEY in the server environment.' },
+        { error: 'AI features are not configured. Set AI_API_KEY in the server environment.' },
         { status: 503 }
       );
     }
