@@ -13,9 +13,12 @@ export async function POST(
 
     const { id } = await params;
     const body = await request.json();
-    const { employeeIds, supervisorMap } = body as {
+    const { employeeIds, supervisorMap, hrReviewerId, managementReviewerId, ceoApproverId } = body as {
       employeeIds?: string[];
       supervisorMap?: Record<string, string>;
+      hrReviewerId?: string;
+      managementReviewerId?: string;
+      ceoApproverId?: string;
     };
 
     const cycle = await db.appraisalCycle.findUnique({ where: { id } });
@@ -126,12 +129,21 @@ export async function POST(
       return undefined;
     }
 
-    // Create assignments
-    const assignmentData: { cycleId: string; employeeId: string; supervisorId: string; escalatedSupervisorId?: string; status: string; currentActionBy: string; deadline: Date }[] = [];
+    // Create assignments with reviewer assignments and reference numbers
+    const assignmentData: {
+      cycleId: string; employeeId: string; supervisorId: string;
+      escalatedSupervisorId?: string; hrReviewerId?: string;
+      managementReviewerId?: string; ceoApproverId?: string;
+      status: string; currentActionBy: string; deadline: Date;
+      appraisalRefNo: string;
+    }[] = [];
 
     for (const emp of employees) {
       let supervisorId = resolveSupervisor(emp);
       if (!supervisorId) continue;
+
+      // Generate unique reference number: CYCLE-TYPE-YEAR-EMPLOYEEID-RANDOM
+      const refNo = `${cycle.cycleType.substring(0, 3).toUpperCase()}-${cycle.year}-${emp.employeeId}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
       if (supervisorId === emp.id) {
         const escalationId = findEscalationSupervisor(emp);
@@ -140,14 +152,22 @@ export async function POST(
         assignmentData.push({
           cycleId: id, employeeId: emp.id, supervisorId,
           escalatedSupervisorId: escalationId,
+          hrReviewerId: hrReviewerId || null,
+          managementReviewerId: managementReviewerId || null,
+          ceoApproverId: ceoApproverId || null,
           status: 'assigned_to_employee', currentActionBy: 'employee',
           deadline: cycle.submissionDeadline,
+          appraisalRefNo: refNo,
         });
       } else {
         assignmentData.push({
           cycleId: id, employeeId: emp.id, supervisorId,
+          hrReviewerId: hrReviewerId || null,
+          managementReviewerId: managementReviewerId || null,
+          ceoApproverId: ceoApproverId || null,
           status: 'assigned_to_employee', currentActionBy: 'employee',
           deadline: cycle.submissionDeadline,
+          appraisalRefNo: refNo,
         });
       }
     }
@@ -156,32 +176,48 @@ export async function POST(
       return NextResponse.json({ error: 'No valid assignments could be created. Ensure employees have line managers or supervisors are assigned.' }, { status: 400 });
     }
 
-    await db.appraisalAssignment.createMany({ data: assignmentData });
+    // Use transaction for atomicity — all assignments or none
+    await db.$transaction(async (tx) => {
+      await tx.appraisalAssignment.createMany({ data: assignmentData });
 
-    // Create notifications
-    const createdAssignments = await db.appraisalAssignment.findMany({
-      where: { cycleId: id },
-      include: { employee: true, supervisor: true },
+      // Create notifications
+      const createdAssignments = await tx.appraisalAssignment.findMany({
+        where: { cycleId: id },
+        include: { employee: true, supervisor: true },
+      });
+
+      const notificationData: { userId: string; assignmentId: string; type: string; title: string; message: string; actionRequired: boolean; link: string }[] = [];
+      for (const a of createdAssignments) {
+        notificationData.push({
+          userId: a.employeeId, assignmentId: a.id, type: 'form_assigned',
+          title: 'New Appraisal Assigned',
+          message: `You have been assigned a new appraisal: ${cycle.name}. Please complete your self-evaluation by ${cycle.submissionDeadline.toLocaleDateString()}.`,
+          actionRequired: true, link: `/appraisal/${a.id}`,
+        });
+        notificationData.push({
+          userId: a.supervisorId, assignmentId: a.id, type: 'cycle_activated',
+          title: 'New Team Appraisal to Review',
+          message: `${a.employee.name} has been assigned an appraisal for cycle "${cycle.name}".`,
+          actionRequired: false, link: `/appraisal/${a.id}`,
+        });
+      }
+      await tx.notification.createMany({ data: notificationData });
+
+      // Update cycle status
+      await tx.appraisalCycle.update({ where: { id }, data: { status: 'active' } });
+
+      // Create audit log for cycle activation
+      await tx.auditLog.create({
+        data: {
+          assignmentId: createdAssignments[0]?.id || '',
+          userId: auth.userId!,
+          action: 'cycle_activated',
+          previousStatus: 'draft',
+          newStatus: 'active',
+          details: `Cycle "${cycle.name}" activated with ${assignmentData.length} assignments`,
+        },
+      });
     });
-
-    const notificationData: { userId: string; assignmentId: string; type: string; title: string; message: string; actionRequired: boolean; link: string }[] = [];
-    for (const a of createdAssignments) {
-      notificationData.push({
-        userId: a.employeeId, assignmentId: a.id, type: 'form_assigned',
-        title: 'New Appraisal Assigned',
-        message: `You have been assigned a new appraisal: ${cycle.name}. Please complete your self-evaluation by ${cycle.submissionDeadline.toLocaleDateString()}.`,
-        actionRequired: true, link: `/appraisal/${a.id}`,
-      });
-      notificationData.push({
-        userId: a.supervisorId, assignmentId: a.id, type: 'cycle_activated',
-        title: 'New Team Appraisal to Review',
-        message: `${a.employee.name} has been assigned an appraisal for cycle "${cycle.name}".`,
-        actionRequired: false, link: `/appraisal/${a.id}`,
-      });
-    }
-    await db.notification.createMany({ data: notificationData });
-
-    await db.appraisalCycle.update({ where: { id }, data: { status: 'active' } });
 
     return NextResponse.json({
       message: 'Cycle activated successfully',

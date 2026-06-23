@@ -13,13 +13,16 @@ export interface AuthResult {
 /**
  * Resolve the authenticated user's ID from the request.
  *
- * Primary path: httpOnly session cookie (JWT).
- * Fallback (dev/legacy): X-User-Id header or userId/createdById in JSON body.
- *   The fallback only exists to keep older clients working; the cookie path
- *   is the secure production path.
+ * Primary path: httpOnly session cookie (JWT) — this is the secure production path.
+ *
+ * IMPORTANT: We do NOT read the request body here. Reading the body stream
+ * (even via clone()) can consume it in some Next.js runtime contexts, causing
+ * the actual route handler's request.json() to fail with "Body is not usable".
+ * This was the root cause of the "authentication required" error for admin
+ * actions that send a JSON body (create cycle, edit employee, etc.).
  */
 async function resolveUserId(request: NextRequest): Promise<string | null> {
-  // 1. Session cookie (secure path)
+  // 1. Session cookie (secure path — primary)
   try {
     const cookieStore = await cookies();
     const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
@@ -31,26 +34,17 @@ async function resolveUserId(request: NextRequest): Promise<string | null> {
     // cookies() may throw in some edge contexts — fall through to header.
   }
 
-  // 2. X-User-Id header (legacy/dev fallback)
+  // 2. X-User-Id header (legacy/dev fallback — does not consume body)
   const headerUserId = request.headers.get('x-user-id');
   if (headerUserId) return headerUserId;
 
-  // 3. userId query param (legacy/dev fallback)
+  // 3. userId query param (legacy/dev fallback — does not consume body)
   const { searchParams } = new URL(request.url);
   const paramUserId = searchParams.get('userId');
   if (paramUserId) return paramUserId;
 
-  // 4. userId inside JSON body (legacy/dev fallback)
-  try {
-    const contentType = request.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      const bodyClone = await request.clone().json();
-      if (bodyClone.userId) return bodyClone.userId;
-      if (bodyClone.createdById) return bodyClone.createdById;
-    }
-  } catch {
-    // Body parse failed — ignore.
-  }
+  // NOTE: We intentionally do NOT read the JSON body for userId/createdById.
+  // Reading the body here breaks the route handler's ability to read it later.
 
   return null;
 }
@@ -91,6 +85,11 @@ export async function requireRole(
         { status: 403 }
       ),
     };
+  }
+
+  // Admin has access to everything — always allowed
+  if (user.role === 'admin') {
+    return { userId: user.id, role: user.role, user };
   }
 
   if (!allowedRoles.includes(user.role)) {
@@ -143,7 +142,7 @@ export async function canAccessAssignment(
 
   const assignment = await db.appraisalAssignment.findUnique({
     where: { id: assignmentId },
-    select: { employeeId: true, supervisorId: true, escalatedSupervisorId: true },
+    select: { employeeId: true, supervisorId: true, escalatedSupervisorId: true, hrReviewerId: true, managementReviewerId: true, ceoApproverId: true },
   });
 
   if (!assignment) {
@@ -157,18 +156,18 @@ export async function canAccessAssignment(
   const role = auth.role!;
   const userId = auth.userId!;
 
-  if (role === 'admin' || role === 'management' || role === 'hr') {
+  // Admin has access to everything
+  if (role === 'admin') {
     return { ...auth, canAccess: true };
   }
 
-  if (role === 'supervisor') {
-    const canAccess =
-      assignment.supervisorId === userId ||
-      assignment.escalatedSupervisorId === userId ||
-      assignment.employeeId === userId;
-    return { ...auth, canAccess };
-  }
+  // Check if user is involved in this assignment
+  const isEmployee = assignment.employeeId === userId;
+  const isSupervisor = assignment.supervisorId === userId || assignment.escalatedSupervisorId === userId;
+  const isHR = assignment.hrReviewerId === userId || role === 'hr';
+  const isManagement = assignment.managementReviewerId === userId || role === 'management';
+  const isCEO = assignment.ceoApproverId === userId || role === 'management'; // CEO is often management role
 
-  const canAccess = assignment.employeeId === userId;
+  const canAccess = isEmployee || isSupervisor || isHR || isManagement || isCEO;
   return { ...auth, canAccess };
 }

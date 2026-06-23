@@ -37,7 +37,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { ArrowLeft, Save, Send, RotateCcw, Loader2, AlertTriangle, Sparkles, BrainCircuit } from 'lucide-react';
+import { ArrowLeft, Save, Send, RotateCcw, Loader2, AlertTriangle, Sparkles, BrainCircuit, Share2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   AppraisalFormDataFull,
@@ -82,13 +82,45 @@ export default function AppraisalForm() {
 
   const userRole = currentUser?.role || 'employee';
   const currentActionBy = assignment?.currentActionBy;
+  const isOwnAppraisal = currentUser?.id === assignment?.employeeId;
+  const isAssignedSupervisor =
+    currentUser?.id === assignment?.supervisorId ||
+    currentUser?.id === assignment?.escalatedSupervisorId;
+  const isAdmin = userRole === 'admin';
 
-  // Can the user edit?
-  const canEditEmployee = userRole === 'employee' && currentActionBy === 'employee';
-  const canEditSupervisor = (userRole === 'supervisor' || userRole === 'admin' || userRole === 'hr') && currentActionBy === 'supervisor' && currentUser?.id !== assignment?.employeeId;
-  const canEditHR = (userRole === 'admin' || userRole === 'hr') && currentActionBy === 'hr';
-  const canEditManagement = userRole === 'management' && (currentActionBy === 'management');
-  const canSubmit = currentActionBy === userRole;
+  // ── Edit permissions: each stage is edited only by its designated role ──
+  // Admin can ALWAYS edit (override capability).
+  const canEditEmployee = (isOwnAppraisal || isAdmin) && (currentActionBy === 'employee' || isAdmin);
+  const canEditSupervisor = (isAssignedSupervisor || isAdmin) && !isOwnAppraisal && (currentActionBy === 'supervisor' || isAdmin);
+  const canEditHR = (userRole === 'hr' || isAdmin) && (currentActionBy === 'hr' || isAdmin);
+  const canEditManagement = (userRole === 'management' || userRole === 'ceo' || isAdmin) && (currentActionBy === 'management' || isAdmin);
+  const canEditCEO = (userRole === 'management' || userRole === 'ceo' || isAdmin) && (currentActionBy === 'ceo' || isAdmin);
+
+  // ── Submit permissions: who can advance the workflow ──
+  const canSubmit =
+    isAdmin ||
+    (currentActionBy === 'employee' && isOwnAppraisal) ||
+    (currentActionBy === 'supervisor' && isAssignedSupervisor && !isOwnAppraisal) ||
+    (currentActionBy === 'hr' && userRole === 'hr') ||
+    (currentActionBy === 'management' && (userRole === 'management' || userRole === 'ceo')) ||
+    (currentActionBy === 'ceo' && (userRole === 'management' || userRole === 'ceo'));
+
+  // Can HR share the approved appraisal with the employee?
+  const canShareWithEmployee = (userRole === 'hr' || isAdmin) && assignment?.status === 'approved';
+
+  // Can HR/Management return the appraisal?
+  const canReturn =
+    (userRole === 'hr' && currentActionBy === 'hr') ||
+    (userRole === 'management' && currentActionBy === 'management') ||
+    (userRole === 'ceo' && currentActionBy === 'ceo') ||
+    isAdmin;
+
+  // Can admin reopen an approved/closed appraisal?
+  const canReopen = isAdmin && ['approved', 'acknowledged_by_employee', 'shared_with_employee', 'closed'].includes(assignment?.status || '');
+
+  // Can user download the PDF? (available after approval)
+  const canDownloadPDF = (assignment?.status === 'approved' || assignment?.status === 'shared_with_employee' || assignment?.status === 'acknowledged_by_employee') &&
+    (isAdmin || userRole === 'hr' || userRole === 'management' || isOwnAppraisal || isAssignedSupervisor);
 
   // Fetch assignment and form data
   useEffect(() => {
@@ -264,13 +296,30 @@ export default function AppraisalForm() {
     }
   };
 
-  // Determine the workflow action based on current user role
+  // Determine the workflow action based on current user role AND current stage
   const getSubmitAction = (): string => {
+    const stage = assignment?.currentActionBy;
+    // Employee stage
+    if (stage === 'employee') return 'employee_submit';
+    // Supervisor stage
+    if (stage === 'supervisor') return 'supervisor_submit';
+    // HR stage — could be initial HR review or final HR review
+    if (stage === 'hr') {
+      // If management has reviewed (status is management_returned_to_hr), HR does final submit to CEO
+      if (assignment?.status === 'management_returned_to_hr') return 'hr_final_submit';
+      // Otherwise, initial HR submit to management
+      return 'hr_submit';
+    }
+    // Management stage
+    if (stage === 'management') return 'management_submit';
+    // CEO stage
+    if (stage === 'ceo') return 'ceo_approve';
+    // Fallback based on role
     if (userRole === 'employee') return 'employee_submit';
     if (userRole === 'supervisor') return 'supervisor_submit';
-    if (userRole === 'admin') return 'hr_submit';
     if (userRole === 'hr') return 'hr_submit';
-    if (userRole === 'management') return 'management_approve';
+    if (userRole === 'management') return 'management_submit';
+    if (userRole === 'ceo') return 'ceo_approve';
     return 'employee_submit';
   };
 
@@ -341,6 +390,94 @@ export default function AppraisalForm() {
     } finally {
       setReturning(false);
       setReturnDialog(false);
+    }
+  };
+
+  // Share with employee (HR action after CEO approval)
+  const [sharing, setSharing] = useState(false);
+  const handleShareWithEmployee = async () => {
+    if (!assignmentId) return;
+    setSharing(true);
+    try {
+      const res = await fetch(`/api/assignments/${assignmentId}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'hr_share' }),
+      });
+      if (res.ok) {
+        toast.success('Appraisal shared with employee successfully');
+        setCurrentView('appraisal-list');
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Failed to share with employee');
+      }
+    } catch {
+      toast.error('Failed to share with employee');
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  // Admin reopen an approved/closed appraisal
+  const [reopening, setReopening] = useState(false);
+  const handleReopen = async () => {
+    if (!assignmentId) return;
+    setReopening(true);
+    try {
+      const res = await fetch(`/api/assignments/${assignmentId}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'admin_reopen', returnReason: 'Reopened by admin for correction' }),
+      });
+      if (res.ok) {
+        toast.success('Appraisal reopened successfully');
+        // Reload the assignment data
+        const [assignRes, formRes] = await Promise.all([
+          fetch(`/api/assignments/${assignmentId}`),
+          fetch(`/api/assignments/${assignmentId}/form`),
+        ]);
+        if (assignRes.ok) setAssignment(await assignRes.json());
+        if (formRes.ok) {
+          const data = await formRes.json();
+          const defaults = createDefaultFormData();
+          setFormData({
+            ...defaults,
+            employeeName: data.employeeName || '',
+            employeeId: data.employeeId || '',
+            designation: data.designation || '',
+            overallExp: data.overallExp || '',
+            yearsWithECI: data.yearsWithECI || '',
+            currentEdu: data.currentEdu || '',
+            requiredExp: data.requiredExp || '',
+            requiredEdu: data.requiredEdu || '',
+            department: data.department || '',
+            appraisalPeriod: data.appraisalPeriod || '',
+            lineManagerName: data.lineManagerName || '',
+            lineManagerDesignation: data.lineManagerDesignation || '',
+            achievements: Array.isArray(data.achievements) ? data.achievements : defaults.achievements,
+            goals: Array.isArray(data.goals) ? data.goals : defaults.goals,
+            technicalSkills: Array.isArray(data.technicalSkills) ? data.technicalSkills : defaults.technicalSkills,
+            leadershipSkills: Array.isArray(data.leadershipSkills) ? data.leadershipSkills : defaults.leadershipSkills,
+            managerialSkills: Array.isArray(data.managerialSkills) ? data.managerialSkills : defaults.managerialSkills,
+            explanations: Array.isArray(data.explanations) ? data.explanations : defaults.explanations,
+            futureGoals: Array.isArray(data.futureGoals) ? data.futureGoals : defaults.futureGoals,
+            remarks: data.remarks || defaults.remarks,
+            employeeSignature: data.employeeSignature || '',
+            employeeSignatureDate: data.employeeSignatureDate || '',
+            supervisorSignature: data.supervisorSignature || '',
+            supervisorSignatureDate: data.supervisorSignatureDate || '',
+            ceoSignature: data.ceoSignature || '',
+            ceoSignatureDate: data.ceoSignatureDate || '',
+          });
+        }
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Failed to reopen');
+      }
+    } catch {
+      toast.error('Failed to reopen');
+    } finally {
+      setReopening(false);
     }
   };
 
@@ -1337,21 +1474,60 @@ export default function AppraisalForm() {
       )}
 
       {/* Bottom Actions */}
-      <div className="flex items-center justify-between no-print">
+      <div className="flex items-center justify-between no-print flex-wrap gap-3">
         <Button variant="outline" onClick={() => setCurrentView('appraisal-list')}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
           Back to List
         </Button>
-        <div className="flex items-center gap-2">
-          {canSubmit && (
-            <Button className="eci-btn-primary" onClick={handleSubmit} disabled={submitting}>
-              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-              Submit
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Download PDF — available after approval */}
+          {canDownloadPDF && (
+            <Button variant="outline" onClick={() => window.open(`/api/assignments/${assignmentId}/pdf`, '_blank')}>
+              <Printer className="h-4 w-4 mr-2" />
+              Download PDF
             </Button>
           )}
-          <Button variant="outline" onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-            Save Draft
-          </Button>
+          {/* Return for Correction */}
+          {canReturn && !canDownloadPDF && (
+            <Button variant="outline" className="border-amber-400 text-amber-700 hover:bg-amber-50" onClick={() => setReturnDialog(true)}>
+              <RotateCcw className="h-4 w-4 mr-2" />
+              Return for Correction
+            </Button>
+          )}
+          {/* Admin Reopen */}
+          {canReopen && (
+            <Button variant="outline" className="border-pink-400 text-pink-700 hover:bg-pink-50" onClick={handleReopen}>
+              <RotateCcw className="h-4 w-4 mr-2" />
+              Reopen (Admin)
+            </Button>
+          )}
+          {/* Share with Employee — HR action after CEO approval */}
+          {canShareWithEmployee && (
+            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleShareWithEmployee} disabled={sharing}>
+              {sharing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Share2 className="h-4 w-4 mr-2" />}
+              Share with Employee
+            </Button>
+          )}
+          {/* Save Draft */}
+          {(canEditEmployee || canEditSupervisor || canEditHR || canEditManagement || canEditCEO) && !canDownloadPDF && (
+            <Button variant="outline" onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+              Save Draft
+            </Button>
+          )}
+          {/* Submit — advances to the next workflow stage */}
+          {canSubmit && !canDownloadPDF && (
+            <Button className="eci-btn-primary" onClick={handleSubmit} disabled={submitting}>
+              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+              {currentActionBy === 'employee' && 'Submit to Supervisor'}
+              {currentActionBy === 'supervisor' && 'Submit to HR'}
+              {currentActionBy === 'hr' && assignment?.status === 'management_returned_to_hr' && 'Submit to CEO/MD'}
+              {currentActionBy === 'hr' && assignment?.status !== 'management_returned_to_hr' && 'Submit to Management'}
+              {currentActionBy === 'management' && 'Submit back to HR'}
+              {currentActionBy === 'ceo' && 'Approve & Finalize'}
+              {!currentActionBy && 'Submit'}
+            </Button>
+          )}
         </div>
       </div>
 

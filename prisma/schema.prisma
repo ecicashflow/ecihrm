@@ -25,8 +25,8 @@ model User {
   currentEdu     String   @default("")
   lineManagerId  String?
   lineManager    User?    @relation("LineManager", fields: [lineManagerId], references: [id])
-  role           String   @default("employee") // admin, supervisor, management, employee, hr
-  isSupervisor   Boolean  @default(false) // true if this employee can supervise others (dual-role)
+  role           String   @default("employee") // admin, supervisor, management, employee, hr, ceo
+  isSupervisor   Boolean  @default(false)
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -40,6 +40,11 @@ model User {
 
   supervisorAppraisals AppraisalAssignment[] @relation("SupervisorAppraisals")
   escalatedAppraisals AppraisalAssignment[] @relation("EscalatedSupervisor")
+  // New: reviewer relations for extended workflow
+  hrReviewerAppraisals    AppraisalAssignment[] @relation("HRReviewerAppraisals")
+  managementReviewerAppraisals AppraisalAssignment[] @relation("MgmtReviewerAppraisals")
+  ceoApproverAppraisals   AppraisalAssignment[] @relation("CEOApproverAppraisals")
+  overrideEdits           ManagementOverrideLog[] @relation("OverrideEditor")
 
   @@index([lineManagerId])
   @@index([role])
@@ -96,28 +101,45 @@ model AppraisalAssignment {
   employee        User     @relation(fields: [employeeId], references: [id])
   supervisorId    String
   supervisor      User     @relation("SupervisorAppraisals", fields: [supervisorId], references: [id])
-  escalatedSupervisorId String? // Used when supervisor === employee to prevent self-review
+  escalatedSupervisorId String?
   escalatedSupervisor   User?   @relation("EscalatedSupervisor", fields: [escalatedSupervisorId], references: [id])
+  // New: assigned reviewer fields for the extended workflow
+  hrReviewerId         String?
+  hrReviewer           User?   @relation("HRReviewerAppraisals", fields: [hrReviewerId], references: [id])
+  managementReviewerId String?
+  managementReviewer   User?   @relation("MgmtReviewerAppraisals", fields: [managementReviewerId], references: [id])
+  ceoApproverId        String?
+  ceoApprover          User?   @relation("CEOApproverAppraisals", fields: [ceoApproverId], references: [id])
+  // Extended status: draft, assigned_to_employee, submitted_by_employee,
+  // submitted_by_supervisor, submitted_to_management, management_returned_to_hr,
+  // submitted_to_ceo, approved, returned_for_employee_revision,
+  // returned_for_supervisor_revision, returned_for_hr_revision,
+  // returned_for_management_revision, reopened_by_admin, shared_with_employee,
+  // acknowledged_by_employee, closed
   status          String   @default("assigned_to_employee")
-  // assigned_to_employee, submitted_by_employee, under_supervisor_review,
-  // submitted_by_supervisor, under_hr_review, submitted_to_management,
-  // under_management_review, returned_for_correction, approved,
-  // shared_with_employee, acknowledged_by_employee, closed
-
-  currentActionBy String   @default("employee") // employee, supervisor, hr, management
+  currentActionBy String   @default("employee") // employee, supervisor, hr, management, ceo
   returnReason    String   @default("")
+  returnStage     String   @default("") // which stage to return to
   deadline        DateTime?
+  // PDF generation
+  finalPdfUrl     String?
+  finalPdfGeneratedAt DateTime?
+  appraisalRefNo  String   @default("") // unique reference number
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   formData        AppraisalFormData?
   auditLogs       AuditLog[]
+  overrideLogs    ManagementOverrideLog[]
   notifications   Notification[]
 
   @@unique([cycleId, employeeId])
   @@index([cycleId])
   @@index([employeeId])
   @@index([supervisorId])
+  @@index([hrReviewerId])
+  @@index([managementReviewerId])
+  @@index([ceoApproverId])
   @@index([status])
 }
 
@@ -269,12 +291,32 @@ model AuditLog {
   assignment      AppraisalAssignment @relation(fields: [assignmentId], references: [id])
   userId          String
   user            User     @relation(fields: [userId], references: [id])
-  action          String   // submitted, returned, approved, acknowledged, remark_added, etc.
+  action          String   // submitted, returned, approved, acknowledged, remark_added, override, reopened, pdf_generated, etc.
   previousStatus  String
   newStatus       String
   details         String   @default("")
+  remarks         String   @default("") // reason for override/return
   createdAt       DateTime @default(now())
 
   @@index([assignmentId])
   @@index([userId])
+}
+
+// Management override log — tracks when management changes supervisor scores
+model ManagementOverrideLog {
+  id              String   @id @default(cuid())
+  assignmentId    String
+  assignment      AppraisalAssignment @relation(fields: [assignmentId], references: [id])
+  editorId        String   // who made the override (management user)
+  editor          User     @relation("OverrideEditor", fields: [editorId], references: [id])
+  fieldName       String   // e.g., "technicalSkills[0].supervisorRating"
+  fieldLabel      String   // human-readable label, e.g., "Technical Skills: Diploma / ToT / Courses"
+  originalValue   String   // original value as string
+  newValue        String   // new value as string
+  reason          String   // mandatory reason for override
+  stage           String   @default("management") // which stage made the override
+  createdAt       DateTime @default(now())
+
+  @@index([assignmentId])
+  @@index([editorId])
 }

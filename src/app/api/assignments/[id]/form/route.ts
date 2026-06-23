@@ -178,7 +178,9 @@ export async function PUT(
       return NextResponse.json({ error: 'Assignment not found' }, { status: 404 });
     }
 
-    // ── STRICT AUTHORIZATION: only the current stage's role can save ──
+    // ── AUTHORIZATION: only the current stage's role can save ──
+    // Admin can ALWAYS edit (override capability) — with audit logging.
+    // Management can override supervisor scores during their review stage.
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
     const callerId = auth.userId!;
@@ -190,31 +192,45 @@ export async function PUT(
       !isEmployee;
     const isHR = callerRole === 'hr';
     const isManagement = callerRole === 'management';
+    const isCEO = callerRole === 'ceo';
+    const isAdmin = callerRole === 'admin';
 
-    const STAGE_AUTH: Record<string, boolean> = {
-      employee: isEmployee,
-      supervisor: isSupervisor,
-      hr: isHR,
-      management: isManagement,
-    };
-
-    const canEdit = STAGE_AUTH[assignment.currentActionBy] ?? false;
-    if (!canEdit) {
-      const stageLabels: Record<string, string> = {
-        employee: 'employee self-evaluation',
-        supervisor: 'supervisor review',
-        hr: 'HR review',
-        management: 'management review',
+    // Admin can always edit (override)
+    if (isAdmin) {
+      // Admin override — proceed with full edit access
+    } else {
+      const STAGE_AUTH: Record<string, boolean> = {
+        employee: isEmployee,
+        supervisor: isSupervisor,
+        hr: isHR,
+        management: isManagement || isCEO,
+        ceo: isCEO || isManagement,
       };
-      return NextResponse.json(
-        {
-          error: `This appraisal is currently in the ${stageLabels[assignment.currentActionBy] || assignment.currentActionBy} stage. Only the designated person for that stage can edit the form.`,
-        },
-        { status: 403 }
-      );
+
+      const canEdit = STAGE_AUTH[assignment.currentActionBy] ?? false;
+      if (!canEdit) {
+        const stageLabels: Record<string, string> = {
+          employee: 'employee self-evaluation',
+          supervisor: 'supervisor review',
+          hr: 'HR review',
+          management: 'management review',
+          ceo: 'CEO approval',
+        };
+        return NextResponse.json(
+          {
+            error: `This appraisal is currently in the ${stageLabels[assignment.currentActionBy] || assignment.currentActionBy} stage. Only the designated person for that stage can edit the form.`,
+          },
+          { status: 403 }
+        );
+      }
     }
 
+    // Determine the effective stage for merging:
+    // - If admin is editing, use the current stage
+    // - If management is editing supervisor scores during management stage,
+    //   we log overrides
     const currentStage = assignment.currentActionBy;
+    const isManagementOverride = isManagement && currentStage === 'management';
     let formData = await db.appraisalFormData.findUnique({
       where: { assignmentId: id },
     });
@@ -314,17 +330,154 @@ export async function PUT(
         // HR can update explanation ratings/remarks, but preserve descriptions
         updateData.explanationsJson = JSON.stringify(body.explanations);
       }
-    } else if (currentStage === 'management') {
-      // Management can edit: CEO signature
+    } else if (currentStage === 'management' || isManagementOverride || isAdmin) {
+      // Management can:
+      // 1. Override supervisor scores (with audit trail)
+      // 2. Add CEO signature
+      // 3. Add management remarks
+      // Admin can also do all of the above at any stage.
+
+      // Override logging for management edits to supervisor scores
+      const overrideLogs: { fieldName: string; fieldLabel: string; originalValue: string; newValue: string }[] = [];
+
+      if (body.achievements !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.achievements, body.achievements, 'employeeRating');
+        // Log overrides to supervisorRating
+        if (isManagementOverride) {
+          for (let i = 0; i < merged.length; i++) {
+            const oldVal = existing.achievements[i]?.supervisorRating;
+            const newVal = merged[i]?.supervisorRating;
+            if (oldVal !== newVal && newVal !== undefined) {
+              overrideLogs.push({
+                fieldName: `achievements[${i}].supervisorRating`,
+                fieldLabel: `Achievement ${i + 1}: ${merged[i]?.description || ''}`.trim(),
+                originalValue: String(oldVal ?? ''),
+                newValue: String(newVal),
+              });
+            }
+          }
+        }
+        updateData.achievementsJson = JSON.stringify(merged);
+      }
+      if (body.goals !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.goals, body.goals, 'employeeRating');
+        if (isManagementOverride) {
+          for (let i = 0; i < merged.length; i++) {
+            const oldVal = existing.goals[i]?.supervisorRating;
+            const newVal = merged[i]?.supervisorRating;
+            if (oldVal !== newVal && newVal !== undefined) {
+              overrideLogs.push({
+                fieldName: `goals[${i}].supervisorRating`,
+                fieldLabel: `Goal ${i + 1}: ${merged[i]?.description || ''}`.trim(),
+                originalValue: String(oldVal ?? ''),
+                newValue: String(newVal),
+              });
+            }
+          }
+        }
+        updateData.goalsJson = JSON.stringify(merged);
+      }
+      if (body.technicalSkills !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'employeeRating');
+        if (isManagementOverride) {
+          for (let i = 0; i < merged.length; i++) {
+            const oldVal = existing.technicalSkills[i]?.supervisorRating;
+            const newVal = merged[i]?.supervisorRating;
+            if (oldVal !== newVal && newVal !== undefined) {
+              overrideLogs.push({
+                fieldName: `technicalSkills[${i}].supervisorRating`,
+                fieldLabel: `Technical: ${merged[i]?.name || ''}`.trim(),
+                originalValue: String(oldVal ?? ''),
+                newValue: String(newVal),
+              });
+            }
+          }
+        }
+        updateData.technicalSkillsJson = JSON.stringify(merged);
+      }
+      if (body.leadershipSkills !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'employeeRating');
+        if (isManagementOverride) {
+          for (let i = 0; i < merged.length; i++) {
+            const oldVal = existing.leadershipSkills[i]?.supervisorRating;
+            const newVal = merged[i]?.supervisorRating;
+            if (oldVal !== newVal && newVal !== undefined) {
+              overrideLogs.push({
+                fieldName: `leadershipSkills[${i}].supervisorRating`,
+                fieldLabel: `Leadership: ${merged[i]?.name || ''}`.trim(),
+                originalValue: String(oldVal ?? ''),
+                newValue: String(newVal),
+              });
+            }
+          }
+        }
+        updateData.leadershipSkillsJson = JSON.stringify(merged);
+      }
+      if (body.managerialSkills !== undefined && existing) {
+        const merged = mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'employeeRating');
+        if (isManagementOverride) {
+          for (let i = 0; i < merged.length; i++) {
+            const oldVal = existing.managerialSkills[i]?.supervisorRating;
+            const newVal = merged[i]?.supervisorRating;
+            if (oldVal !== newVal && newVal !== undefined) {
+              overrideLogs.push({
+                fieldName: `managerialSkills[${i}].supervisorRating`,
+                fieldLabel: `Managerial: ${merged[i]?.name || ''}`.trim(),
+                originalValue: String(oldVal ?? ''),
+                newValue: String(newVal),
+              });
+            }
+          }
+        }
+        updateData.managerialSkillsJson = JSON.stringify(merged);
+      }
       if (body.ceoSignature !== undefined) {
         updateData.ceoSignature = body.ceoSignature;
       }
       if (body.ceoSignatureDate !== undefined) {
         updateData.ceoSignatureDate = body.ceoSignatureDate || null;
       }
+      if (body.supervisorSignature !== undefined) {
+        updateData.supervisorSignature = body.supervisorSignature;
+      }
+      if (body.supervisorSignatureDate !== undefined) {
+        updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
+      }
       if (body.remarks !== undefined && existing) {
-        // Management remarks — preserve everything else
-        updateData.remarksJson = JSON.stringify(body.remarks);
+        // Management remarks — merge preserving other stages
+        const merged = mergeRemarks(existing.remarks, body.remarks, 'management');
+        updateData.remarksJson = JSON.stringify(merged);
+      }
+
+      // Save override logs to database
+      if (overrideLogs.length > 0) {
+        const overrideReason = body.overrideReason || 'Management override';
+        for (const log of overrideLogs) {
+          await db.managementOverrideLog.create({
+            data: {
+              assignmentId: id,
+              editorId: callerId,
+              fieldName: log.fieldName,
+              fieldLabel: log.fieldLabel,
+              originalValue: log.originalValue,
+              newValue: log.newValue,
+              reason: overrideReason,
+              stage: 'management',
+            },
+          });
+        }
+        // Also create an audit log entry
+        await db.auditLog.create({
+          data: {
+            assignmentId: id,
+            userId: callerId,
+            action: 'management_override',
+            previousStatus: assignment.status,
+            newStatus: assignment.status,
+            details: `Management overrode ${overrideLogs.length} supervisor score(s). Reason: ${overrideReason}`,
+            remarks: overrideReason,
+          },
+        });
       }
     }
 
