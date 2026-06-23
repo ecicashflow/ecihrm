@@ -137,7 +137,8 @@ export async function GET(
     });
   } catch (error) {
     console.error('PDF generation error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: 'Internal server error', detail: errorMsg }, { status: 500 });
   }
 }
 
@@ -323,12 +324,12 @@ function generatePdfHtml(
     <h2>7. Remarks & Recommendations</h2>
     <div class="remarks-box">
       <strong>Supervisor Remarks:</strong> ${data.remarks.supervisorGeneralRemarks || 'No remarks provided.'}<br>
-      <small>Satisfaction: ${data.data.remarks.supervisorSatisfaction === true ? 'Satisfied' : data.remarks.supervisorSatisfaction === false ? 'Not Satisfied' : '—'} | Promotion: ${data.data.remarks.supervisorConsiderationPromotion ? 'Considered' : 'No'} | Increment: ${data.data.remarks.supervisorConsiderationIncrement ? 'Considered' : 'No'} | Reward: ${data.data.remarks.supervisorConsiderationReward ? 'Considered' : 'No'}</small>
+      <small>Satisfaction: ${data.remarks.supervisorSatisfaction === true ? 'Satisfied' : data.remarks.supervisorSatisfaction === false ? 'Not Satisfied' : '—'} | Promotion: ${data.remarks.supervisorConsiderationPromotion ? 'Considered' : 'No'} | Increment: ${data.remarks.supervisorConsiderationIncrement ? 'Considered' : 'No'} | Reward: ${data.remarks.supervisorConsiderationReward ? 'Considered' : 'No'}</small>
     </div>
     <div class="remarks-box">
       <strong>HR Remarks:</strong> ${data.remarks.hrGeneralRemarks || 'No remarks provided.'}<br>
-      <small>Skills: ${data.data.remarks.hrSatisfactionSkills === true ? 'Satisfied' : data.remarks.hrSatisfactionSkills === false ? 'Not Satisfied' : '—'} | Behavior: ${data.data.remarks.hrSatisfactionBehavior === true ? 'Satisfied' : data.remarks.hrSatisfactionBehavior === false ? 'Not Satisfied' : '—'} | Performance: ${data.data.remarks.hrSatisfactionPerformance === true ? 'Satisfied' : data.remarks.hrSatisfactionPerformance === false ? 'Not Satisfied' : '—'}</small><br>
-      <small>Monitoring: ${data.data.remarks.hrRecommendationMonitoring ? 'Yes' : 'No'} | Promotion: ${data.data.remarks.hrRecommendationPromotion ? 'Yes' : 'No'} | Reward: ${data.data.remarks.hrRecommendationReward ? 'Yes' : 'No'}</small>
+      <small>Skills: ${data.remarks.hrSatisfactionSkills === true ? 'Satisfied' : data.remarks.hrSatisfactionSkills === false ? 'Not Satisfied' : '—'} | Behavior: ${data.remarks.hrSatisfactionBehavior === true ? 'Satisfied' : data.remarks.hrSatisfactionBehavior === false ? 'Not Satisfied' : '—'} | Performance: ${data.remarks.hrSatisfactionPerformance === true ? 'Satisfied' : data.remarks.hrSatisfactionPerformance === false ? 'Not Satisfied' : '—'}</small><br>
+      <small>Monitoring: ${data.remarks.hrRecommendationMonitoring ? 'Yes' : 'No'} | Promotion: ${data.remarks.hrRecommendationPromotion ? 'Yes' : 'No'} | Reward: ${data.remarks.hrRecommendationReward ? 'Yes' : 'No'}</small>
     </div>
   </div>
 
