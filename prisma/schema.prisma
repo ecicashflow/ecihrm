@@ -132,6 +132,8 @@ model AppraisalAssignment {
   auditLogs       AuditLog[]
   overrideLogs    ManagementOverrideLog[]
   notifications   Notification[]
+  criterionResponses AppraisalCriterionResponse[] @relation("CriterionResponses")
+  stageReviews    AppraisalStageReview[] @relation("StageReviews")
 
   @@unique([cycleId, employeeId])
   @@index([cycleId])
@@ -319,4 +321,55 @@ model ManagementOverrideLog {
 
   @@index([assignmentId])
   @@index([editorId])
+}
+
+// ── NEW: Criterion-level responses separated by review stage ──
+// Each reviewer's score/rating/remark is stored in its own row,
+// keyed by (assignmentId, criterionName, reviewStage).
+// This PREVENTS any reviewer from overwriting another reviewer's data.
+model AppraisalCriterionResponse {
+  id                      String   @id @default(cuid())
+  assignmentId            String
+  assignment              AppraisalAssignment @relation("CriterionResponses", fields: [assignmentId], references: [id])
+  criterionName           String   // e.g., "Diploma / ToT / Courses" or "Achievement 1"
+  criterionSection        String   // "technical_skills", "leadership_skills", "managerial_skills", "achievements", "goals"
+  criterionIndex          Int      @default(0) // index within the section
+  reviewStage             String   // "EMPLOYEE_SELF", "SUPERVISOR_REVIEW", "HR_INITIAL_REVIEW", "MANAGEMENT_REVIEW", "HR_FINAL_REVIEW"
+  score                   Float    @default(0)
+  rating                  String   @default("") // "1", "2", "3", "4", "5", "NA", "0"
+  remarks                 String   @default("")
+  description             String   @default("") // for achievements/goals
+  savedByUserId           String?
+  draftSavedAt            DateTime?
+  submittedAt             DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@unique([assignmentId, criterionName, criterionSection, criterionIndex, reviewStage])
+  @@index([assignmentId])
+  @@index([reviewStage])
+}
+
+// ── NEW: Stage-level review records ──
+// Stores overall remarks, signatures, and status per review stage.
+model AppraisalStageReview {
+  id                      String   @id @default(cuid())
+  assignmentId            String
+  assignment              AppraisalAssignment @relation("StageReviews", fields: [assignmentId], references: [id])
+  reviewStage             String   // "EMPLOYEE_SELF", "SUPERVISOR_REVIEW", "HR_INITIAL_REVIEW", "MANAGEMENT_REVIEW", "HR_FINAL_REVIEW", "CEO_APPROVAL"
+  assignedUserId          String?
+  status                  String   @default("pending") // "pending", "draft", "submitted", "approved", "returned"
+  overallRemarks          String   @default("")
+  returnReason            String   @default("")
+  signature               String   @default("")
+  signatureDate           String   @default("")
+  draftSavedAt            DateTime?
+  submittedAt             DateTime?
+  approvedAt              DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@unique([assignmentId, reviewStage])
+  @@index([assignmentId])
+  @@index([reviewStage])
 }

@@ -1,4 +1,5 @@
 'use client';
+import { apiFetch } from '@/lib/api';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAppStore } from '@/store/app-store';
@@ -129,8 +130,8 @@ export default function AppraisalForm() {
       try {
         setError(null);
         const [assignRes, formRes] = await Promise.all([
-          fetch(`/api/assignments/${assignmentId}`),
-          fetch(`/api/assignments/${assignmentId}/form`),
+          apiFetch(`/api/assignments/${assignmentId}`),
+          apiFetch(`/api/assignments/${assignmentId}/form`),
         ]);
         if (assignRes.ok) setAssignment(await assignRes.json());
         if (formRes.ok) {
@@ -278,10 +279,10 @@ export default function AppraisalForm() {
     if (!assignmentId || !formData) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/assignments/${assignmentId}/form`, {
+      const res = await apiFetch(`/api/assignments/${assignmentId}/form`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, callerId: currentUser?.id }),
+        body: JSON.stringify({ ...formData, callerId: currentUser?.id, _isDraft: true }),
       });
       if (res.ok) {
         toast.success('Draft saved successfully');
@@ -339,14 +340,14 @@ export default function AppraisalForm() {
     setSubmitting(true);
     try {
       // Save form data first
-      await fetch(`/api/assignments/${assignmentId}/form`, {
+      await apiFetch(`/api/assignments/${assignmentId}/form`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, callerId: currentUser?.id }),
+        body: JSON.stringify({ ...formData, callerId: currentUser?.id, _isDraft: true }),
       });
 
       const action = getSubmitAction();
-      const res = await fetch(`/api/assignments/${assignmentId}/submit`, {
+      const res = await apiFetch(`/api/assignments/${assignmentId}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
@@ -373,7 +374,7 @@ export default function AppraisalForm() {
     }
     setReturning(true);
     try {
-      const res = await fetch(`/api/assignments/${assignmentId}/submit`, {
+      const res = await apiFetch(`/api/assignments/${assignmentId}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'management_return', returnReason }),
@@ -399,7 +400,7 @@ export default function AppraisalForm() {
     if (!assignmentId) return;
     setSharing(true);
     try {
-      const res = await fetch(`/api/assignments/${assignmentId}/submit`, {
+      const res = await apiFetch(`/api/assignments/${assignmentId}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'hr_share' }),
@@ -424,7 +425,7 @@ export default function AppraisalForm() {
     if (!assignmentId) return;
     setReopening(true);
     try {
-      const res = await fetch(`/api/assignments/${assignmentId}/submit`, {
+      const res = await apiFetch(`/api/assignments/${assignmentId}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'admin_reopen', returnReason: 'Reopened by admin for correction' }),
@@ -433,8 +434,8 @@ export default function AppraisalForm() {
         toast.success('Appraisal reopened successfully');
         // Reload the assignment data
         const [assignRes, formRes] = await Promise.all([
-          fetch(`/api/assignments/${assignmentId}`),
-          fetch(`/api/assignments/${assignmentId}/form`),
+          apiFetch(`/api/assignments/${assignmentId}`),
+          apiFetch(`/api/assignments/${assignmentId}/form`),
         ]);
         if (assignRes.ok) setAssignment(await assignRes.json());
         if (formRes.ok) {

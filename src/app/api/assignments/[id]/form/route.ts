@@ -3,10 +3,22 @@ import { db } from '@/lib/db';
 import { createDefaultFormData, calculateAppraisalScores } from '@/lib/constants';
 import { requireAuth } from '@/lib/auth-guard';
 
+// Map workflow stage to review stage
+const STAGE_MAP: Record<string, string> = {
+  employee: 'EMPLOYEE_SELF',
+  supervisor: 'SUPERVISOR_REVIEW',
+  hr: 'HR_INITIAL_REVIEW',
+  management: 'MANAGEMENT_REVIEW',
+  ceo: 'CEO_APPROVAL',
+};
+
+// Sections that have ratings (achievements, goals, technicalSkills, leadershipSkills, managerialSkills)
+const RATED_SECTIONS = ['achievements', 'goals', 'technicalSkills', 'leadershipSkills', 'managerialSkills'];
+
 /**
  * GET /api/assignments/[id]/form
- * Returns the appraisal form data. If no form data exists yet, creates a
- * default record populated from the employee + designation + cycle records.
+ * Returns the COMPLETE appraisal detail with ALL reviewer stages separately.
+ * Does NOT filter by current reviewer role — all prior-stage data is always returned.
  */
 export async function GET(
   _request: NextRequest,
@@ -18,21 +30,17 @@ export async function GET(
     const assignment = await db.appraisalAssignment.findUnique({
       where: { id },
       include: {
-        employee: {
-          select: {
-            id: true, name: true, employeeId: true, designation: true,
-            department: true, overallExp: true, yearsWithECI: true, currentEdu: true,
-          },
-        },
-        supervisor: {
-          select: { id: true, name: true, designation: true },
-        },
-        escalatedSupervisor: {
-          select: { id: true, name: true, designation: true },
-        },
-        cycle: {
-          select: { id: true, name: true, cycleType: true, year: true, periodFrom: true, periodTo: true },
-        },
+        employee: { select: { id: true, name: true, employeeId: true, designation: true, department: true, overallExp: true, yearsWithECI: true, currentEdu: true } },
+        supervisor: { select: { id: true, name: true, designation: true } },
+        escalatedSupervisor: { select: { id: true, name: true, designation: true } },
+        hrReviewer: { select: { id: true, name: true, designation: true } },
+        managementReviewer: { select: { id: true, name: true, designation: true } },
+        ceoApprover: { select: { id: true, name: true, designation: true } },
+        cycle: { select: { id: true, name: true, cycleType: true, year: true, periodFrom: true, periodTo: true } },
+        formData: true,
+        criterionResponses: { orderBy: [{ criterionSection: 'asc' }, { criterionIndex: 'asc' }] },
+        stageReviews: true,
+        overrideLogs: { include: { editor: { select: { name: true, role: true } } }, orderBy: { createdAt: 'asc' } },
       },
     });
 
@@ -40,21 +48,13 @@ export async function GET(
       return NextResponse.json({ error: 'Assignment not found' }, { status: 404 });
     }
 
-    let formData = await db.appraisalFormData.findUnique({
-      where: { assignmentId: id },
-    });
-
-    // If no form data yet, create it with defaults
-    if (!formData) {
+    // If no formData yet, create it with defaults
+    if (!assignment.formData) {
       const emp = assignment.employee;
       const sup = assignment.supervisor;
       const cyc = assignment.cycle;
-
-      const designation = await db.designation.findUnique({
-        where: { title: emp.designation },
-      });
-
-      formData = await db.appraisalFormData.create({
+      const designation = await db.designation.findUnique({ where: { title: emp.designation } });
+      assignment.formData = await db.appraisalFormData.create({
         data: {
           assignmentId: id,
           employeeName: emp.name,
@@ -81,18 +81,115 @@ export async function GET(
       });
     }
 
-    // Parse JSON fields for response
+    // Build the response: combine legacy JSON data with new criterion-response data
+    // If criterion responses exist, use them; otherwise fall back to legacy JSON
+    const fd = assignment.formData;
+    const responses = assignment.criterionResponses || [];
+    const stageReviews = assignment.stageReviews || [];
+
+    // Group responses by section+index, then by reviewStage
+    const responseMap = new Map<string, Record<string, any>>();
+    for (const r of responses) {
+      const key = `${r.criterionSection}__${r.criterionIndex}`;
+      if (!responseMap.has(key)) responseMap.set(key, {});
+      const stageData = responseMap.get(key)!;
+      stageData[r.reviewStage] = {
+        score: r.score,
+        rating: r.rating,
+        remarks: r.remarks,
+        description: r.description,
+        savedByUserId: r.savedByUserId,
+        draftSavedAt: r.draftSavedAt,
+        submittedAt: r.submittedAt,
+      };
+    }
+
+    // Group stage reviews by reviewStage
+    const stageReviewMap = new Map<string, any>();
+    for (const sr of stageReviews) {
+      stageReviewMap.set(sr.reviewStage, {
+        status: sr.status,
+        overallRemarks: sr.overallRemarks,
+        returnReason: sr.returnReason,
+        signature: sr.signature,
+        signatureDate: sr.signatureDate,
+        draftSavedAt: sr.draftSavedAt,
+        submittedAt: sr.submittedAt,
+        approvedAt: sr.approvedAt,
+      });
+    }
+
+    // Parse legacy JSON for backward compatibility
+    const legacyAchievements = JSON.parse(fd.achievementsJson);
+    const legacyGoals = JSON.parse(fd.goalsJson);
+    const legacyTechSkills = JSON.parse(fd.technicalSkillsJson);
+    const legacyLeadSkills = JSON.parse(fd.leadershipSkillsJson);
+    const legacyMgrSkills = JSON.parse(fd.managerialSkillsJson);
+    const legacyExplanations = JSON.parse(fd.explanationsJson);
+    const legacyFutureGoals = JSON.parse(fd.futureGoalsJson);
+    const legacyRemarks = JSON.parse(fd.remarksJson);
+
+    // Build merged arrays: use criterion responses if available, otherwise legacy
+    function buildMergedArray(section: string, legacy: any[], defaults: any[]) {
+      const result: any[] = [];
+      const maxLen = Math.max(legacy.length, defaults.length);
+      for (let i = 0; i < maxLen; i++) {
+        const leg = legacy[i] || {};
+        const def = defaults[i] || {};
+        const key = `${section}__${i}`;
+        const respData = responseMap.get(key) || {};
+        result.push({
+          ...def,
+          ...leg,
+          name: leg.name || def.name || '',
+          description: leg.description || def.description || '',
+          employeeRating: leg.employeeRating ?? def.employeeRating ?? 0,
+          supervisorRating: leg.supervisorRating ?? def.supervisorRating ?? 0,
+          // Also include structured response data by stage
+          responses: respData,
+        });
+      }
+      return result;
+    }
+
+    const defaults = createDefaultFormData();
     const result = {
-      ...formData,
-      achievements: JSON.parse(formData.achievementsJson),
-      goals: JSON.parse(formData.goalsJson),
-      technicalSkills: JSON.parse(formData.technicalSkillsJson),
-      leadershipSkills: JSON.parse(formData.leadershipSkillsJson),
-      managerialSkills: JSON.parse(formData.managerialSkillsJson),
-      explanations: JSON.parse(formData.explanationsJson),
-      futureGoals: JSON.parse(formData.futureGoalsJson),
-      remarks: JSON.parse(formData.remarksJson),
-      aiAnalysis: JSON.parse(formData.aiAnalysisJson || '{}'),
+      ...fd,
+      // Basic info
+      employeeName: fd.employeeName,
+      employeeId: fd.employeeId,
+      designation: fd.designation,
+      overallExp: fd.overallExp,
+      yearsWithECI: fd.yearsWithECI,
+      currentEdu: fd.currentEdu,
+      requiredExp: fd.requiredExp,
+      requiredEdu: fd.requiredEdu,
+      department: fd.department,
+      appraisalPeriod: fd.appraisalPeriod,
+      lineManagerName: fd.lineManagerName,
+      lineManagerDesignation: fd.lineManagerDesignation,
+      // Arrays (merged legacy + new responses)
+      achievements: buildMergedArray('achievements', legacyAchievements, defaults.achievements),
+      goals: buildMergedArray('goals', legacyGoals, defaults.goals),
+      technicalSkills: buildMergedArray('technicalSkills', legacyTechSkills, defaults.technicalSkills),
+      leadershipSkills: buildMergedArray('leadershipSkills', legacyLeadSkills, defaults.leadershipSkills),
+      managerialSkills: buildMergedArray('managerialSkills', legacyMgrSkills, defaults.managerialSkills),
+      explanations: legacyExplanations.length > 0 ? legacyExplanations : defaults.explanations,
+      futureGoals: legacyFutureGoals.length > 0 ? legacyFutureGoals : defaults.futureGoals,
+      remarks: legacyRemarks,
+      // Signatures (from legacy + stage reviews)
+      employeeSignature: stageReviewMap.get('EMPLOYEE_SELF')?.signature ?? fd.employeeSignature ?? '',
+      employeeSignatureDate: stageReviewMap.get('EMPLOYEE_SELF')?.signatureDate ?? fd.employeeSignatureDate ?? '',
+      supervisorSignature: stageReviewMap.get('SUPERVISOR_REVIEW')?.signature ?? fd.supervisorSignature ?? '',
+      supervisorSignatureDate: stageReviewMap.get('SUPERVISOR_REVIEW')?.signatureDate ?? fd.supervisorSignatureDate ?? '',
+      ceoSignature: stageReviewMap.get('CEO_APPROVAL')?.signature ?? fd.ceoSignature ?? '',
+      ceoSignatureDate: stageReviewMap.get('CEO_APPROVAL')?.signatureDate ?? fd.ceoSignatureDate ?? '',
+      // Structured stage data (always available)
+      stageReviews: Object.fromEntries(stageReviewMap),
+      // Override logs
+      overrideLogs: assignment.overrideLogs || [],
+      // AI analysis
+      aiAnalysis: JSON.parse(fd.aiAnalysisJson || '{}'),
     };
 
     return NextResponse.json(result);
@@ -103,62 +200,12 @@ export async function GET(
 }
 
 /**
- * Merge helper: for arrays of rating items, preserve the existing
- * employeeRating and only update supervisorRating (and vice versa).
+ * PUT /api/assignments/[id]/form
+ * Saves ONLY the current reviewer's stage data.
+ * Uses database transaction to save both legacy JSON (for backward compat) and
+ * new criterion-response rows (for permanent separation).
+ * NEVER overwrites another reviewer's data.
  */
-function mergeRatingArrays(
-  existing: any[],
-  incoming: any[],
-  preserveKey: 'employeeRating' | 'supervisorRating'
-): any[] {
-  if (!Array.isArray(existing) || !Array.isArray(incoming)) {
-    return incoming || existing || [];
-  }
-  const maxLen = Math.max(existing.length, incoming.length);
-  const result: any[] = [];
-  for (let i = 0; i < maxLen; i++) {
-    const ex = existing[i] || {};
-    const inc = incoming[i] || {};
-    result.push({
-      ...ex,       // start with existing (preserves all data)
-      ...inc,      // overlay incoming
-      // But force-preserve the key that belongs to the OTHER role:
-      [preserveKey]: ex[preserveKey] !== undefined ? ex[preserveKey] : (inc[preserveKey] ?? 0),
-    });
-  }
-  return result;
-}
-
-/**
- * Merge remarks: preserve the other role's fields.
- */
-function mergeRemarks(
-  existing: Record<string, any>,
-  incoming: Record<string, any>,
-  currentStage: string
-): Record<string, any> {
-  const merged = { ...existing, ...incoming };
-  // If supervisor is saving, preserve HR fields
-  if (currentStage === 'supervisor') {
-    const hrFields = ['hrSatisfactionSkills', 'hrSatisfactionBehavior', 'hrSatisfactionPerformance',
-                      'hrRecommendationMonitoring', 'hrRecommendationPromotion', 'hrRecommendationReward',
-                      'hrGeneralRemarks'];
-    for (const f of hrFields) {
-      if (existing[f] !== undefined) merged[f] = existing[f];
-    }
-  }
-  // If HR is saving, preserve supervisor fields
-  if (currentStage === 'hr') {
-    const supFields = ['supervisorSatisfaction', 'supervisorConsiderationPromotion',
-                       'supervisorConsiderationIncrement', 'supervisorConsiderationReward',
-                       'supervisorGeneralRemarks'];
-    for (const f of supFields) {
-      if (existing[f] !== undefined) merged[f] = existing[f];
-    }
-  }
-  return merged;
-}
-
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -169,418 +216,301 @@ export async function PUT(
 
     const assignment = await db.appraisalAssignment.findUnique({
       where: { id },
-      include: {
-        employee: { select: { id: true, name: true } },
-      },
+      include: { employee: { select: { id: true, name: true } } },
     });
 
     if (!assignment) {
       return NextResponse.json({ error: 'Assignment not found' }, { status: 404 });
     }
 
-    // ── AUTHORIZATION: only the current stage's role can save ──
-    // Admin can ALWAYS edit (override capability) — with audit logging.
-    // Management can override supervisor scores during their review stage.
+    // Authorize: only the current stage's reviewer can save
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
     const callerId = auth.userId!;
     const callerRole = auth.role!;
-
-    const isEmployee = assignment.employeeId === callerId;
-    const isSupervisor =
-      (assignment.supervisorId === callerId || assignment.escalatedSupervisorId === callerId) &&
-      !isEmployee;
-    const isHR = callerRole === 'hr';
-    const isManagement = callerRole === 'management';
-    const isCEO = callerRole === 'ceo';
     const isAdmin = callerRole === 'admin';
 
-    // Admin can always edit (override)
-    if (isAdmin) {
-      // Admin override — proceed with full edit access
-    } else {
-      const STAGE_AUTH: Record<string, boolean> = {
-        employee: isEmployee,
-        supervisor: isSupervisor,
-        hr: isHR,
-        management: isManagement || isCEO,
-        ceo: isCEO || isManagement,
-      };
+    const currentStage = assignment.currentActionBy;
+    const reviewStage = STAGE_MAP[currentStage] || 'EMPLOYEE_SELF';
 
-      const canEdit = STAGE_AUTH[assignment.currentActionBy] ?? false;
-      if (!canEdit) {
-        const stageLabels: Record<string, string> = {
-          employee: 'employee self-evaluation',
-          supervisor: 'supervisor review',
-          hr: 'HR review',
-          management: 'management review',
-          ceo: 'CEO approval',
-        };
-        return NextResponse.json(
-          {
-            error: `This appraisal is currently in the ${stageLabels[assignment.currentActionBy] || assignment.currentActionBy} stage. Only the designated person for that stage can edit the form.`,
-          },
-          { status: 403 }
-        );
-      }
+    // Check edit permission
+    const isEmployee = assignment.employeeId === callerId;
+    const isSupervisor = (assignment.supervisorId === callerId || assignment.escalatedSupervisorId === callerId) && !isEmployee;
+    const isHR = callerRole === 'hr';
+    const isManagement = callerRole === 'management' || callerRole === 'ceo';
+
+    const STAGE_AUTH: Record<string, boolean> = {
+      employee: isEmployee || isAdmin,
+      supervisor: isSupervisor || isAdmin,
+      hr: isHR || isAdmin,
+      management: isManagement || isAdmin,
+      ceo: isManagement || isAdmin,
+    };
+
+    const canEdit = STAGE_AUTH[currentStage] ?? false;
+    if (!canEdit) {
+      return NextResponse.json(
+        { error: `This appraisal is in the ${currentStage} stage. Only the designated reviewer can save.` },
+        { status: 403 }
+      );
     }
 
-    // Determine the effective stage for merging:
-    // - If admin is editing, use the current stage
-    // - If management is editing supervisor scores during management stage,
-    //   we log overrides
-    const currentStage = assignment.currentActionBy;
-    const isManagementOverride = isManagement && currentStage === 'management';
-    let formData = await db.appraisalFormData.findUnique({
-      where: { assignmentId: id },
-    });
+    // Determine if this is a draft save or submit
+    const isDraft = body._isDraft === true;
 
-    // Parse existing data for merging
-    const existing = formData ? {
-      achievements: JSON.parse(formData.achievementsJson),
-      goals: JSON.parse(formData.goalsJson),
-      technicalSkills: JSON.parse(formData.technicalSkillsJson),
-      leadershipSkills: JSON.parse(formData.leadershipSkillsJson),
-      managerialSkills: JSON.parse(formData.managerialSkillsJson),
-      explanations: JSON.parse(formData.explanationsJson),
-      futureGoals: JSON.parse(formData.futureGoalsJson),
-      remarks: JSON.parse(formData.remarksJson),
-    } : null;
+    // Use transaction for atomic save
+    await db.$transaction(async (tx) => {
+      // 1. Save to legacy JSON (for backward compatibility with the existing UI)
+      let formData = await tx.appraisalFormData.findUnique({ where: { assignmentId: id } });
+      const existing = formData ? {
+        achievements: JSON.parse(formData.achievementsJson),
+        goals: JSON.parse(formData.goalsJson),
+        technicalSkills: JSON.parse(formData.technicalSkillsJson),
+        leadershipSkills: JSON.parse(formData.leadershipSkillsJson),
+        managerialSkills: JSON.parse(formData.managerialSkillsJson),
+        explanations: JSON.parse(formData.explanationsJson),
+        futureGoals: JSON.parse(formData.futureGoalsJson),
+        remarks: JSON.parse(formData.remarksJson),
+      } : null;
 
-    // ── STAGE-AWARE MERGING ──
-    // Each stage only updates its own fields, preserving data from other stages.
-    const updateData: Record<string, unknown> = {};
+      const updateData: Record<string, unknown> = {};
 
-    if (currentStage === 'employee') {
-      // Employee can edit: descriptions, employeeRating, futureGoals, explanations, employeeSignature
-      if (body.achievements !== undefined) {
-        updateData.achievementsJson = JSON.stringify(body.achievements);
-      }
-      if (body.goals !== undefined) {
-        updateData.goalsJson = JSON.stringify(body.goals);
-      }
-      if (body.technicalSkills !== undefined) {
-        // Merge: preserve supervisorRating from existing, use new employeeRating
-        const merged = existing ? mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'supervisorRating') : body.technicalSkills;
-        updateData.technicalSkillsJson = JSON.stringify(merged);
-      }
-      if (body.leadershipSkills !== undefined) {
-        const merged = existing ? mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'supervisorRating') : body.leadershipSkills;
-        updateData.leadershipSkillsJson = JSON.stringify(merged);
-      }
-      if (body.managerialSkills !== undefined) {
-        const merged = existing ? mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'supervisorRating') : body.managerialSkills;
-        updateData.managerialSkillsJson = JSON.stringify(merged);
-      }
-      if (body.explanations !== undefined) {
-        updateData.explanationsJson = JSON.stringify(body.explanations);
-      }
-      if (body.futureGoals !== undefined) {
-        updateData.futureGoalsJson = JSON.stringify(body.futureGoals);
-      }
-      if (body.employeeSignature !== undefined) {
-        updateData.employeeSignature = body.employeeSignature;
-      }
-      if (body.employeeSignatureDate !== undefined) {
-        updateData.employeeSignatureDate = body.employeeSignatureDate || null;
-      }
-    } else if (currentStage === 'supervisor') {
-      // Supervisor can edit: supervisorRating in all arrays, supervisorSignature, supervisor remarks
-      if (body.achievements !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.achievements, body.achievements, 'employeeRating');
-        updateData.achievementsJson = JSON.stringify(merged);
-      }
-      if (body.goals !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.goals, body.goals, 'employeeRating');
-        updateData.goalsJson = JSON.stringify(merged);
-      }
-      if (body.technicalSkills !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'employeeRating');
-        updateData.technicalSkillsJson = JSON.stringify(merged);
-      }
-      if (body.leadershipSkills !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'employeeRating');
-        updateData.leadershipSkillsJson = JSON.stringify(merged);
-      }
-      if (body.managerialSkills !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'employeeRating');
-        updateData.managerialSkillsJson = JSON.stringify(merged);
-      }
-      if (body.explanations !== undefined && existing) {
-        // Preserve employee data, update supervisor fields
-        updateData.explanationsJson = JSON.stringify(body.explanations);
-      }
-      if (body.supervisorSignature !== undefined) {
-        updateData.supervisorSignature = body.supervisorSignature;
-      }
-      if (body.supervisorSignatureDate !== undefined) {
-        updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
-      }
-      if (body.remarks !== undefined && existing) {
-        const merged = mergeRemarks(existing.remarks, body.remarks, 'supervisor');
-        updateData.remarksJson = JSON.stringify(merged);
-      }
-    } else if (currentStage === 'hr') {
-      // HR can edit: HR remarks, explanations (HR remarks on explanations)
-      if (body.remarks !== undefined && existing) {
-        const merged = mergeRemarks(existing.remarks, body.remarks, 'hr');
-        updateData.remarksJson = JSON.stringify(merged);
-      }
-      if (body.explanations !== undefined && existing) {
-        // HR can update explanation ratings/remarks, but preserve descriptions
-        updateData.explanationsJson = JSON.stringify(body.explanations);
-      }
-    } else if (currentStage === 'management' || isManagementOverride || isAdmin) {
-      // Management can:
-      // 1. Override supervisor scores (with audit trail)
-      // 2. Add CEO signature
-      // 3. Add management remarks
-      // Admin can also do all of the above at any stage.
-
-      // Override logging for management edits to supervisor scores
-      const overrideLogs: { fieldName: string; fieldLabel: string; originalValue: string; newValue: string }[] = [];
-
-      if (body.achievements !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.achievements, body.achievements, 'employeeRating');
-        // Log overrides to supervisorRating
-        if (isManagementOverride) {
-          for (let i = 0; i < merged.length; i++) {
-            const oldVal = existing.achievements[i]?.supervisorRating;
-            const newVal = merged[i]?.supervisorRating;
-            if (oldVal !== newVal && newVal !== undefined) {
-              overrideLogs.push({
-                fieldName: `achievements[${i}].supervisorRating`,
-                fieldLabel: `Achievement ${i + 1}: ${merged[i]?.description || ''}`.trim(),
-                originalValue: String(oldVal ?? ''),
-                newValue: String(newVal),
-              });
-            }
-          }
+      // MERGE: preserve other roles' data, update only current role's data
+      // Use the mergeRatingArrays approach for legacy JSON
+      function mergeRatingArrays(existingArr: any[], incomingArr: any[], preserveKey: string): any[] {
+        if (!Array.isArray(existingArr) || !Array.isArray(incomingArr)) return incomingArr || existingArr || [];
+        const maxLen = Math.max(existingArr.length, incomingArr.length);
+        const result: any[] = [];
+        const otherKey = preserveKey === 'employeeRating' ? 'supervisorRating' : 'employeeRating';
+        for (let i = 0; i < maxLen; i++) {
+          const ex = existingArr[i] || {};
+          const inc = incomingArr[i] || {};
+          const merged: any = { ...ex };
+          if (inc.description !== undefined) merged.description = inc.description;
+          if (inc.name !== undefined) merged.name = inc.name;
+          const incRating = inc[otherKey];
+          const exRating = ex[otherKey];
+          if (incRating === 'NA') merged[otherKey] = 'NA';
+          else if (incRating !== undefined && Number(incRating) > 0) merged[otherKey] = incRating;
+          else if (exRating !== undefined) merged[otherKey] = exRating;
+          else merged[otherKey] = 0;
+          merged[preserveKey] = ex[preserveKey] !== undefined ? ex[preserveKey] : (inc[preserveKey] ?? 0);
+          result.push(merged);
         }
-        updateData.achievementsJson = JSON.stringify(merged);
-      }
-      if (body.goals !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.goals, body.goals, 'employeeRating');
-        if (isManagementOverride) {
-          for (let i = 0; i < merged.length; i++) {
-            const oldVal = existing.goals[i]?.supervisorRating;
-            const newVal = merged[i]?.supervisorRating;
-            if (oldVal !== newVal && newVal !== undefined) {
-              overrideLogs.push({
-                fieldName: `goals[${i}].supervisorRating`,
-                fieldLabel: `Goal ${i + 1}: ${merged[i]?.description || ''}`.trim(),
-                originalValue: String(oldVal ?? ''),
-                newValue: String(newVal),
-              });
-            }
-          }
-        }
-        updateData.goalsJson = JSON.stringify(merged);
-      }
-      if (body.technicalSkills !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'employeeRating');
-        if (isManagementOverride) {
-          for (let i = 0; i < merged.length; i++) {
-            const oldVal = existing.technicalSkills[i]?.supervisorRating;
-            const newVal = merged[i]?.supervisorRating;
-            if (oldVal !== newVal && newVal !== undefined) {
-              overrideLogs.push({
-                fieldName: `technicalSkills[${i}].supervisorRating`,
-                fieldLabel: `Technical: ${merged[i]?.name || ''}`.trim(),
-                originalValue: String(oldVal ?? ''),
-                newValue: String(newVal),
-              });
-            }
-          }
-        }
-        updateData.technicalSkillsJson = JSON.stringify(merged);
-      }
-      if (body.leadershipSkills !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'employeeRating');
-        if (isManagementOverride) {
-          for (let i = 0; i < merged.length; i++) {
-            const oldVal = existing.leadershipSkills[i]?.supervisorRating;
-            const newVal = merged[i]?.supervisorRating;
-            if (oldVal !== newVal && newVal !== undefined) {
-              overrideLogs.push({
-                fieldName: `leadershipSkills[${i}].supervisorRating`,
-                fieldLabel: `Leadership: ${merged[i]?.name || ''}`.trim(),
-                originalValue: String(oldVal ?? ''),
-                newValue: String(newVal),
-              });
-            }
-          }
-        }
-        updateData.leadershipSkillsJson = JSON.stringify(merged);
-      }
-      if (body.managerialSkills !== undefined && existing) {
-        const merged = mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'employeeRating');
-        if (isManagementOverride) {
-          for (let i = 0; i < merged.length; i++) {
-            const oldVal = existing.managerialSkills[i]?.supervisorRating;
-            const newVal = merged[i]?.supervisorRating;
-            if (oldVal !== newVal && newVal !== undefined) {
-              overrideLogs.push({
-                fieldName: `managerialSkills[${i}].supervisorRating`,
-                fieldLabel: `Managerial: ${merged[i]?.name || ''}`.trim(),
-                originalValue: String(oldVal ?? ''),
-                newValue: String(newVal),
-              });
-            }
-          }
-        }
-        updateData.managerialSkillsJson = JSON.stringify(merged);
-      }
-      if (body.ceoSignature !== undefined) {
-        updateData.ceoSignature = body.ceoSignature;
-      }
-      if (body.ceoSignatureDate !== undefined) {
-        updateData.ceoSignatureDate = body.ceoSignatureDate || null;
-      }
-      if (body.supervisorSignature !== undefined) {
-        updateData.supervisorSignature = body.supervisorSignature;
-      }
-      if (body.supervisorSignatureDate !== undefined) {
-        updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
-      }
-      if (body.remarks !== undefined && existing) {
-        // Management remarks — merge preserving other stages
-        const merged = mergeRemarks(existing.remarks, body.remarks, 'management');
-        updateData.remarksJson = JSON.stringify(merged);
+        return result;
       }
 
-      // Save override logs to database
-      if (overrideLogs.length > 0) {
-        const overrideReason = body.overrideReason || 'Management override';
-        for (const log of overrideLogs) {
-          await db.managementOverrideLog.create({
-            data: {
+      if (currentStage === 'employee') {
+        if (body.achievements !== undefined) updateData.achievementsJson = JSON.stringify(existing ? mergeRatingArrays(existing.achievements, body.achievements, 'supervisorRating') : body.achievements);
+        if (body.goals !== undefined) updateData.goalsJson = JSON.stringify(existing ? mergeRatingArrays(existing.goals, body.goals, 'supervisorRating') : body.goals);
+        if (body.technicalSkills !== undefined) updateData.technicalSkillsJson = JSON.stringify(existing ? mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'supervisorRating') : body.technicalSkills);
+        if (body.leadershipSkills !== undefined) updateData.leadershipSkillsJson = JSON.stringify(existing ? mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'supervisorRating') : body.leadershipSkills);
+        if (body.managerialSkills !== undefined) updateData.managerialSkillsJson = JSON.stringify(existing ? mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'supervisorRating') : body.managerialSkills);
+        if (body.explanations !== undefined) updateData.explanationsJson = JSON.stringify(body.explanations);
+        if (body.futureGoals !== undefined) updateData.futureGoalsJson = JSON.stringify(body.futureGoals);
+        if (body.employeeSignature !== undefined) updateData.employeeSignature = body.employeeSignature;
+        if (body.employeeSignatureDate !== undefined) updateData.employeeSignatureDate = body.employeeSignatureDate || null;
+      } else if (currentStage === 'supervisor') {
+        if (body.achievements !== undefined && existing) updateData.achievementsJson = JSON.stringify(mergeRatingArrays(existing.achievements, body.achievements, 'employeeRating'));
+        if (body.goals !== undefined && existing) updateData.goalsJson = JSON.stringify(mergeRatingArrays(existing.goals, body.goals, 'employeeRating'));
+        if (body.technicalSkills !== undefined && existing) updateData.technicalSkillsJson = JSON.stringify(mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'employeeRating'));
+        if (body.leadershipSkills !== undefined && existing) updateData.leadershipSkillsJson = JSON.stringify(mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'employeeRating'));
+        if (body.managerialSkills !== undefined && existing) updateData.managerialSkillsJson = JSON.stringify(mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'employeeRating'));
+        if (body.supervisorSignature !== undefined) updateData.supervisorSignature = body.supervisorSignature;
+        if (body.supervisorSignatureDate !== undefined) updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
+        if (body.remarks !== undefined && existing) {
+          const mergedRemarks = { ...existing.remarks, ...body.remarks };
+          // Preserve HR fields
+          const hrFields = ['hrSatisfactionSkills', 'hrSatisfactionBehavior', 'hrSatisfactionPerformance', 'hrRecommendationMonitoring', 'hrRecommendationPromotion', 'hrRecommendationReward', 'hrGeneralRemarks'];
+          for (const f of hrFields) if (existing.remarks[f] !== undefined) mergedRemarks[f] = existing.remarks[f];
+          updateData.remarksJson = JSON.stringify(mergedRemarks);
+        }
+      } else if (currentStage === 'hr') {
+        if (body.remarks !== undefined && existing) {
+          const mergedRemarks = { ...existing.remarks, ...body.remarks };
+          const supFields = ['supervisorSatisfaction', 'supervisorConsiderationPromotion', 'supervisorConsiderationIncrement', 'supervisorConsiderationReward', 'supervisorGeneralRemarks'];
+          for (const f of supFields) if (existing.remarks[f] !== undefined) mergedRemarks[f] = existing.remarks[f];
+          updateData.remarksJson = JSON.stringify(mergedRemarks);
+        }
+      } else if (currentStage === 'management' || currentStage === 'ceo' || isAdmin) {
+        // Management/CEO/Admin can override
+        if (body.achievements !== undefined && existing) updateData.achievementsJson = JSON.stringify(mergeRatingArrays(existing.achievements, body.achievements, 'employeeRating'));
+        if (body.goals !== undefined && existing) updateData.goalsJson = JSON.stringify(mergeRatingArrays(existing.goals, body.goals, 'employeeRating'));
+        if (body.technicalSkills !== undefined && existing) updateData.technicalSkillsJson = JSON.stringify(mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'employeeRating'));
+        if (body.leadershipSkills !== undefined && existing) updateData.leadershipSkillsJson = JSON.stringify(mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'employeeRating'));
+        if (body.managerialSkills !== undefined && existing) updateData.managerialSkillsJson = JSON.stringify(mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'employeeRating'));
+        if (body.remarks !== undefined && existing) updateData.remarksJson = JSON.stringify(body.remarks);
+        if (body.ceoSignature !== undefined) updateData.ceoSignature = body.ceoSignature;
+        if (body.ceoSignatureDate !== undefined) updateData.ceoSignatureDate = body.ceoSignatureDate || null;
+        if (body.supervisorSignature !== undefined) updateData.supervisorSignature = body.supervisorSignature;
+        if (body.supervisorSignatureDate !== undefined) updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
+      }
+
+      // Recalculate scores
+      const formForCalc = {
+        achievements: updateData.achievementsJson ? JSON.parse(updateData.achievementsJson as string) : (existing?.achievements || []),
+        goals: updateData.goalsJson ? JSON.parse(updateData.goalsJson as string) : (existing?.goals || []),
+        technicalSkills: updateData.technicalSkillsJson ? JSON.parse(updateData.technicalSkillsJson as string) : (existing?.technicalSkills || []),
+        leadershipSkills: updateData.leadershipSkillsJson ? JSON.parse(updateData.leadershipSkillsJson as string) : (existing?.leadershipSkills || []),
+        managerialSkills: updateData.managerialSkillsJson ? JSON.parse(updateData.managerialSkillsJson as string) : (existing?.managerialSkills || []),
+        explanations: updateData.explanationsJson ? JSON.parse(updateData.explanationsJson as string) : (existing?.explanations || []),
+      };
+      const empScores = calculateAppraisalScores(formForCalc, 'employee');
+      const supScores = calculateAppraisalScores(formForCalc, 'supervisor');
+      Object.assign(updateData, {
+        achievementsSubtotalEmployee: empScores.marksGoals,
+        technicalSubtotalEmployee: empScores.techSubtotal,
+        leadershipSubtotalEmployee: empScores.leadSubtotal,
+        managerialSubtotalEmployee: empScores.mgrSubtotal,
+        totalCompetenciesEmployee: empScores.totalCompetencies,
+        totalMarksDeducted: empScores.marksDeducted,
+        grandTotalEmployee: empScores.grandTotal,
+        overallPercentageEmployee: empScores.overallPercentage,
+        ratingEmployee: empScores.rating,
+        achievementsSubtotalSupervisor: supScores.marksGoals,
+        technicalSubtotalSupervisor: supScores.techSubtotal,
+        leadershipSubtotalSupervisor: supScores.leadSubtotal,
+        managerialSubtotalSupervisor: supScores.mgrSubtotal,
+        totalCompetenciesSupervisor: supScores.totalCompetencies,
+        grandTotalSupervisor: supScores.grandTotal,
+        overallPercentageSupervisor: supScores.overallPercentage,
+        ratingSupervisor: supScores.rating,
+      });
+
+      if (formData) {
+        await tx.appraisalFormData.update({ where: { assignmentId: id }, data: updateData });
+      }
+
+      // 2. Save to new criterion-response table (permanent separation by stage)
+      // For each rated section, upsert criterion responses
+      const sections = [
+        { key: 'achievements', section: 'achievements', data: body.achievements },
+        { key: 'goals', section: 'goals', data: body.goals },
+        { key: 'technicalSkills', section: 'technicalSkills', data: body.technicalSkills },
+        { key: 'leadershipSkills', section: 'leadershipSkills', data: body.leadershipSkills },
+        { key: 'managerialSkills', section: 'managerialSkills', data: body.managerialSkills },
+      ];
+
+      for (const sec of sections) {
+        if (!sec.data || !Array.isArray(sec.data)) continue;
+        for (let i = 0; i < sec.data.length; i++) {
+          const item = sec.data[i];
+          const criterionName = item.name || `Item ${i + 1}`;
+          const rating = currentStage === 'employee' ? String(item.employeeRating ?? 0) : String(item.supervisorRating ?? 0);
+          const description = item.description ?? '';
+          
+          await tx.appraisalCriterionResponse.upsert({
+            where: {
+              assignmentId_criterionName_criterionSection_criterionIndex_reviewStage: {
+                assignmentId: id,
+                criterionName,
+                criterionSection: sec.section,
+                criterionIndex: i,
+                reviewStage,
+              }
+            },
+            create: {
               assignmentId: id,
-              editorId: callerId,
-              fieldName: log.fieldName,
-              fieldLabel: log.fieldLabel,
-              originalValue: log.originalValue,
-              newValue: log.newValue,
-              reason: overrideReason,
-              stage: 'management',
+              criterionName,
+              criterionSection: sec.section,
+              criterionIndex: i,
+              reviewStage,
+              score: Number(rating) || 0,
+              rating,
+              remarks: description,
+              description,
+              savedByUserId: callerId,
+              draftSavedAt: isDraft ? new Date() : null,
+              submittedAt: !isDraft ? new Date() : null,
+            },
+            update: {
+              score: Number(rating) || 0,
+              rating,
+              remarks: description,
+              description,
+              savedByUserId: callerId,
+              ...(isDraft ? { draftSavedAt: new Date() } : { submittedAt: new Date() }),
             },
           });
         }
-        // Also create an audit log entry
-        await db.auditLog.create({
-          data: {
-            assignmentId: id,
-            userId: callerId,
-            action: 'management_override',
-            previousStatus: assignment.status,
-            newStatus: assignment.status,
-            details: `Management overrode ${overrideLogs.length} supervisor score(s). Reason: ${overrideReason}`,
-            remarks: overrideReason,
-          },
-        });
       }
-    }
 
-    // ── Recalculate scores using MERGED data ──
-    // Use the final merged arrays (existing + updates) for calculation
-    const formForCalc = {
-      achievements: updateData.achievementsJson ? JSON.parse(updateData.achievementsJson as string) : (existing?.achievements || []),
-      goals: updateData.goalsJson ? JSON.parse(updateData.goalsJson as string) : (existing?.goals || []),
-      technicalSkills: updateData.technicalSkillsJson ? JSON.parse(updateData.technicalSkillsJson as string) : (existing?.technicalSkills || []),
-      leadershipSkills: updateData.leadershipSkillsJson ? JSON.parse(updateData.leadershipSkillsJson as string) : (existing?.leadershipSkills || []),
-      managerialSkills: updateData.managerialSkillsJson ? JSON.parse(updateData.managerialSkillsJson as string) : (existing?.managerialSkills || []),
-      explanations: updateData.explanationsJson ? JSON.parse(updateData.explanationsJson as string) : (existing?.explanations || []),
-    };
+      // 3. Save stage review record
+      const stageReviewData: Record<string, unknown> = {
+        assignmentId: id,
+        reviewStage,
+        assignedUserId: callerId,
+        status: isDraft ? 'draft' : 'submitted',
+      };
 
-    const empScores = calculateAppraisalScores(formForCalc, 'employee');
-    updateData.achievementsSubtotalEmployee = empScores.marksGoals;
-    updateData.technicalSubtotalEmployee = empScores.techSubtotal;
-    updateData.leadershipSubtotalEmployee = empScores.leadSubtotal;
-    updateData.managerialSubtotalEmployee = empScores.mgrSubtotal;
-    updateData.totalCompetenciesEmployee = empScores.totalCompetencies;
-    updateData.totalMarksDeducted = empScores.marksDeducted;
-    updateData.totalNAInGoalsEmployee = empScores.naCountGoals;
-    updateData.totalNAInTechnicalEmployee = empScores.naTech;
-    updateData.totalNAInLeadershipEmployee = empScores.naLead;
-    updateData.totalNAInManagerialEmployee = empScores.naMgr;
-    updateData.totalNAInExplanations = empScores.naExplanations;
-    updateData.maxMarksGoals = empScores.maxMarksGoals;
-    updateData.maxMarksCompetencies = empScores.maxMarksCompetencies;
-    updateData.maxMarksExplanations = empScores.maxMarksExplanations;
-    updateData.grandTotalEmployee = empScores.grandTotal;
-    updateData.overallPercentageEmployee = empScores.overallPercentage;
-    updateData.ratingEmployee = empScores.rating;
-
-    const supScores = calculateAppraisalScores(formForCalc, 'supervisor');
-    updateData.achievementsSubtotalSupervisor = supScores.marksGoals;
-    updateData.technicalSubtotalSupervisor = supScores.techSubtotal;
-    updateData.leadershipSubtotalSupervisor = supScores.leadSubtotal;
-    updateData.managerialSubtotalSupervisor = supScores.mgrSubtotal;
-    updateData.totalCompetenciesSupervisor = supScores.totalCompetencies;
-    updateData.totalNAInGoalsSupervisor = supScores.naCountGoals;
-    updateData.totalNAInTechnicalSupervisor = supScores.naTech;
-    updateData.totalNAInLeadershipSupervisor = supScores.naLead;
-    updateData.totalNAInManagerialSupervisor = supScores.naMgr;
-    updateData.grandTotalSupervisor = supScores.grandTotal;
-    updateData.overallPercentageSupervisor = supScores.overallPercentage;
-    updateData.ratingSupervisor = supScores.rating;
-
-    if (formData) {
-      formData = await db.appraisalFormData.update({
-        where: { assignmentId: id },
-        data: updateData,
-      });
-    } else {
-      // Create new with the merged data
-      const assignmentData = await db.appraisalAssignment.findUnique({
-        where: { id },
-        include: {
-          employee: {
-            select: { id: true, name: true, employeeId: true, designation: true, department: true, overallExp: true, yearsWithECI: true, currentEdu: true },
-          },
-          supervisor: { select: { id: true, name: true, designation: true } },
-          cycle: { select: { id: true, name: true, periodFrom: true, periodTo: true } },
-        },
-      });
-      if (assignmentData) {
-        const emp = assignmentData.employee;
-        const sup = assignmentData.supervisor;
-        const cyc = assignmentData.cycle;
-        formData = await db.appraisalFormData.create({
-          data: {
-            assignmentId: id,
-            employeeName: emp.name,
-            employeeId: emp.employeeId,
-            designation: emp.designation,
-            overallExp: emp.overallExp,
-            yearsWithECI: emp.yearsWithECI,
-            currentEdu: emp.currentEdu,
-            department: emp.department,
-            appraisalPeriod: `${cyc.periodFrom} to ${cyc.periodTo}`,
-            lineManagerName: sup.name,
-            lineManagerDesignation: sup.designation,
-            ...updateData,
-          },
-        });
+      if (currentStage === 'employee') {
+        if (body.employeeSignature !== undefined) {
+          stageReviewData.signature = body.employeeSignature;
+          stageReviewData.signatureDate = body.employeeSignatureDate || '';
+        }
+      } else if (currentStage === 'supervisor') {
+        if (body.supervisorSignature !== undefined) {
+          stageReviewData.signature = body.supervisorSignature;
+          stageReviewData.signatureDate = body.supervisorSignatureDate || '';
+        }
+        if (body.remarks?.supervisorGeneralRemarks !== undefined) {
+          stageReviewData.overallRemarks = body.remarks.supervisorGeneralRemarks;
+        }
+      } else if (currentStage === 'hr') {
+        if (body.remarks?.hrGeneralRemarks !== undefined) {
+          stageReviewData.overallRemarks = body.remarks.hrGeneralRemarks;
+        }
+      } else if (currentStage === 'ceo') {
+        if (body.ceoSignature !== undefined) {
+          stageReviewData.signature = body.ceoSignature;
+          stageReviewData.signatureDate = body.ceoSignatureDate || '';
+        }
       }
-    }
+
+      if (isDraft) {
+        stageReviewData.draftSavedAt = new Date();
+      } else {
+        stageReviewData.submittedAt = new Date();
+      }
+
+      await tx.appraisalStageReview.upsert({
+        where: { assignmentId_reviewStage: { assignmentId: id, reviewStage } },
+        create: stageReviewData as any,
+        update: stageReviewData as any,
+      });
+    });
+
+    // Return the updated form data
+    const updatedAssignment = await db.appraisalAssignment.findUnique({
+      where: { id },
+      include: {
+        formData: true,
+        criterionResponses: { orderBy: [{ criterionSection: 'asc' }, { criterionIndex: 'asc' }] },
+        stageReviews: true,
+      },
+    });
+
+    const fd = updatedAssignment?.formData;
+    if (!fd) return NextResponse.json({ error: 'Form data not found' }, { status: 404 });
 
     const result = {
-      ...formData,
-      achievements: JSON.parse((formData as { achievementsJson: string }).achievementsJson),
-      goals: JSON.parse((formData as { goalsJson: string }).goalsJson),
-      technicalSkills: JSON.parse((formData as { technicalSkillsJson: string }).technicalSkillsJson),
-      leadershipSkills: JSON.parse((formData as { leadershipSkillsJson: string }).leadershipSkillsJson),
-      managerialSkills: JSON.parse((formData as { managerialSkillsJson: string }).managerialSkillsJson),
-      explanations: JSON.parse((formData as { explanationsJson: string }).explanationsJson),
-      futureGoals: JSON.parse((formData as { futureGoalsJson: string }).futureGoalsJson),
-      remarks: JSON.parse((formData as { remarksJson: string }).remarksJson),
-      aiAnalysis: JSON.parse((formData as { aiAnalysisJson: string }).aiAnalysisJson || '{}'),
+      ...fd,
+      achievements: JSON.parse(fd.achievementsJson),
+      goals: JSON.parse(fd.goalsJson),
+      technicalSkills: JSON.parse(fd.technicalSkillsJson),
+      leadershipSkills: JSON.parse(fd.leadershipSkillsJson),
+      managerialSkills: JSON.parse(fd.managerialSkillsJson),
+      explanations: JSON.parse(fd.explanationsJson),
+      futureGoals: JSON.parse(fd.futureGoalsJson),
+      remarks: JSON.parse(fd.remarksJson),
+      aiAnalysis: JSON.parse(fd.aiAnalysisJson || '{}'),
+      criterionResponses: updatedAssignment?.criterionResponses || [],
+      stageReviews: updatedAssignment?.stageReviews || [],
     };
 
     return NextResponse.json(result);
   } catch (error) {
     console.error('Save form data error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error', detail: String(error) }, { status: 500 });
   }
 }
