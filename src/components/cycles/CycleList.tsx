@@ -33,7 +33,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Plus, Eye, Play, XCircle, Search } from 'lucide-react';
-import { format } from 'date-fns';
 import { toast } from 'sonner';
 import type { CycleDetail, CycleStatus } from '@/lib/types';
 import { CYCLE_STATUS_LABELS, CYCLE_TYPE_LABELS } from '@/lib/constants';
@@ -211,7 +210,7 @@ export default function CycleList() {
                       <TableCell>{cycle.year}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {cycle.periodFrom && cycle.periodTo
-                          ? `${format(new Date(cycle.periodFrom), 'MMM yyyy')} - ${format(new Date(cycle.periodTo), 'MMM yyyy')}`
+                          ? `${cycle.periodFrom} - ${cycle.periodTo}`
                           : '-'}
                       </TableCell>
                       <TableCell>

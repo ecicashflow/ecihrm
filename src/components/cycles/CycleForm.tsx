@@ -164,22 +164,47 @@ export default function CycleForm() {
       setSelectedEmployees((prev) => prev.filter((id) => !visibleIds.includes(id)));
     } else {
       setSelectedEmployees((prev) => [...new Set([...prev, ...visibleIds])]);
+      // Auto-populate supervisor for any newly-selected employee that has a
+      // line manager but no explicit supervisor assignment yet. Without this,
+      // validate() rejects the form with "Supervisor required for ...".
+      setSupervisorMap((prev) => {
+        const next = { ...prev };
+        for (const emp of filteredEmployees) {
+          if (!next[emp.id] && emp.lineManagerId && emp.lineManagerId !== emp.id) {
+            next[emp.id] = emp.lineManagerId;
+          }
+        }
+        return next;
+      });
     }
   };
 
-  const validate = () => {
+  // Compute a supervisor map with fallbacks resolved for every selected
+  // employee. Returns the resolved map (does not mutate state). Used both to
+  // update the UI and to build the activation request body so they never
+  // diverge due to async state updates.
+  const resolveSupervisorMap = (): Record<string, string> => {
+    const next = { ...supervisorMap };
+    for (const empId of selectedEmployees) {
+      if (next[empId]) continue;
+      const emp = employees.find((e) => e.id === empId);
+      if (emp?.lineManagerId && emp.lineManagerId !== empId) {
+        next[empId] = emp.lineManagerId;
+      } else if (supervisors.length > 0) {
+        const fallback = supervisors.find((s) => s.id !== empId);
+        if (fallback) next[empId] = fallback.id;
+      }
+    }
+    return next;
+  };
+
+  const validate = (): string | null => {
     if (!name.trim()) return 'Cycle name is required';
     if (!year) return 'Year is required';
     if (!periodFrom || !periodTo) return 'Period dates are required';
     if (!startDate || !endDate) return 'Start and end dates are required';
     if (!submissionDeadline) return 'Submission deadline is required';
     if (selectedEmployees.length === 0) return 'At least one employee must be selected';
-    for (const empId of selectedEmployees) {
-      if (!supervisorMap[empId]) {
-        const emp = employees.find((e) => e.id === empId);
-        return `Supervisor required for ${emp?.name || 'an employee'}`;
-      }
-    }
     return null;
   };
 
@@ -194,6 +219,16 @@ export default function CycleForm() {
       toast.error('You must be logged in to create a cycle');
       return;
     }
+
+    // Resolve supervisor fallbacks synchronously so the UI and the request
+    // body use the exact same data.
+    const resolvedSupervisorMap = resolveSupervisorMap();
+    if (Object.keys(resolvedSupervisorMap).length < selectedEmployees.length) {
+      toast.error('Could not assign a supervisor to every selected employee. Please assign supervisors manually.');
+      return;
+    }
+    // Reflect the resolved assignments back into the UI state.
+    setSupervisorMap(resolvedSupervisorMap);
 
     if (activate) setActivating(true);
     else setSaving(true);
@@ -237,7 +272,7 @@ export default function CycleForm() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               employeeIds: selectedEmployees,
-              supervisorMap,
+              supervisorMap: resolvedSupervisorMap,
             }),
           });
           if (actRes.ok) {

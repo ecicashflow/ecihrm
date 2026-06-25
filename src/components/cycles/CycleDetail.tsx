@@ -20,6 +20,22 @@ import { format } from 'date-fns';
 import type { AppraisalStatus, AssignmentDetail } from '@/lib/types';
 import { APPRAISAL_STATUS_LABELS, APPRAISAL_STATUS_COLORS, CYCLE_STATUS_LABELS, CYCLE_TYPE_LABELS } from '@/lib/constants';
 
+/**
+ * Safely format an ISO date string. Returns '-' if the value is missing or invalid.
+ * Prevents `RangeError: Invalid time value` from date-fns when the input is
+ * a non-ISO string (e.g., "January 2025") that the browser cannot parse.
+ */
+function formatDateSafe(value: string | null | undefined): string {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  try {
+    return format(d, 'MMM dd, yyyy');
+  } catch {
+    return String(value);
+  }
+}
+
 export default function CycleDetail() {
   const { viewParams, setCurrentView, setViewParams } = useAppStore();
   const cycleId = viewParams?.id;
@@ -116,21 +132,21 @@ export default function CycleDetail() {
               <p className="text-muted-foreground">Period</p>
               <p className="font-medium">
                 {cycle.periodFrom && cycle.periodTo
-                  ? `${format(new Date(cycle.periodFrom), 'MMM dd, yyyy')} - ${format(new Date(cycle.periodTo), 'MMM dd, yyyy')}`
+                  ? `${cycle.periodFrom} - ${cycle.periodTo}`
                   : '-'}
               </p>
             </div>
             <div>
               <p className="text-muted-foreground">Start Date</p>
-              <p className="font-medium">{cycle.startDate ? format(new Date(cycle.startDate), 'MMM dd, yyyy') : '-'}</p>
+              <p className="font-medium">{formatDateSafe(cycle.startDate)}</p>
             </div>
             <div>
               <p className="text-muted-foreground">End Date</p>
-              <p className="font-medium">{cycle.endDate ? format(new Date(cycle.endDate), 'MMM dd, yyyy') : '-'}</p>
+              <p className="font-medium">{formatDateSafe(cycle.endDate)}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Submission Deadline</p>
-              <p className="font-medium">{cycle.submissionDeadline ? format(new Date(cycle.submissionDeadline), 'MMM dd, yyyy') : '-'}</p>
+              <p className="font-medium">{formatDateSafe(cycle.submissionDeadline)}</p>
             </div>
           </div>
         </CardContent>
@@ -213,7 +229,7 @@ export default function CycleDetail() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {assignment.deadline ? format(new Date(assignment.deadline), 'MMM dd, yyyy') : '-'}
+                        {formatDateSafe(assignment.deadline)}
                       </TableCell>
                       <TableCell>
                         <Button
