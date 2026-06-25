@@ -47,48 +47,59 @@ export default function AppraisalList() {
   const [activeTab, setActiveTab] = useState<TabValue>('my');
 
   useEffect(() => {
-    fetchData();
-  }, [activeTab]);
+    // Guard against stale responses: if the user switches tabs quickly,
+    // a slow response from the previous tab could overwrite the new data.
+    // We track the latest fetch and ignore any response that isn't current.
+    let stale = false;
 
-  async function fetchData() {
-    try {
-      const role = currentUser?.role || 'employee';
-      const params = new URLSearchParams();
+    async function fetchData() {
+      try {
+        const role = currentUser?.role || 'employee';
+        const params = new URLSearchParams();
 
-      if (isManagement) {
-        // Management/admin/HR see all — no tabs needed
-        if (currentUser?.role === 'supervisor') params.set('supervisorId', currentUser.id);
-        if (currentUser?.role === 'management') params.set('managementView', 'true');
-      } else if (isDualRole) {
-        // Dual-role: fetch based on active tab
-        if (activeTab === 'team') {
-          params.set('supervisorId', currentUser!.id);
-        } else {
+        if (isManagement) {
+          // Management/admin/HR see all — no tabs needed
+          if (currentUser?.role === 'supervisor') params.set('supervisorId', currentUser.id);
+          if (currentUser?.role === 'management' || currentUser?.role === 'admin' || currentUser?.role === 'hr') params.set('managementView', 'true');
+        } else if (isDualRole) {
+          // Dual-role: fetch based on active tab
+          if (activeTab === 'team') {
+            params.set('supervisorId', currentUser!.id);
+          } else {
+            params.set('employeeId', currentUser!.id);
+          }
+        } else if (role === 'employee') {
           params.set('employeeId', currentUser!.id);
+        } else if (role === 'supervisor') {
+          params.set('supervisorId', currentUser!.id);
         }
-      } else if (role === 'employee') {
-        params.set('employeeId', currentUser!.id);
-      } else if (role === 'supervisor') {
-        params.set('supervisorId', currentUser!.id);
+
+        const [assignRes, cycleRes, deptRes] = await Promise.all([
+          fetch(`/api/assignments?${params.toString()}`),
+          fetch('/api/cycles'),
+          fetch('/api/departments'),
+        ]);
+
+        // Ignore stale responses from a previous tab to prevent a slow
+        // response from overwriting the current tab's data (race condition).
+        if (stale) return;
+
+        if (assignRes.ok) setAssignments((await assignRes.json()).assignments || []);
+        if (cycleRes.ok) setCycles((await cycleRes.json()).cycles || []);
+        if (deptRes.ok) setDepartments((await deptRes.json()).departments || []);
+      } catch {
+        // Server unavailable - show empty state gracefully
+        if (stale) return;
+        console.warn('Server unavailable, showing empty assignment list');
+        setAssignments([]);
+      } finally {
+        if (!stale) setLoading(false);
       }
-
-      const [assignRes, cycleRes, deptRes] = await Promise.all([
-        fetch(`/api/assignments?${params.toString()}`),
-        fetch('/api/cycles'),
-        fetch('/api/departments'),
-      ]);
-
-      if (assignRes.ok) setAssignments((await assignRes.json()).assignments || []);
-      if (cycleRes.ok) setCycles((await cycleRes.json()).cycles || []);
-      if (deptRes.ok) setDepartments((await deptRes.json()).departments || []);
-    } catch {
-      // Server unavailable - show empty state gracefully
-      console.warn('Server unavailable, showing empty assignment list');
-      setAssignments([]);
-    } finally {
-      setLoading(false);
     }
-  }
+
+    fetchData();
+    return () => { stale = true; };
+  }, [activeTab]);
 
   const filteredAssignments = assignments.filter((a) => {
     const matchStatus = statusFilter === 'all' || a.status === statusFilter;

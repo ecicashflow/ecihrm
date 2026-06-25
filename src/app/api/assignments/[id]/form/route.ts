@@ -258,7 +258,10 @@ export async function PUT(
     // Determine if this is a draft save or submit
     const isDraft = body._isDraft === true;
 
-    // Use transaction for atomic save
+    // Use transaction for atomic save.
+    // NOTE: Neon + PgBouncer connections can be slow/short-lived. We extend the
+    // transaction timeout to 30s (default is 5s) so the many sequential upserts
+    // for criterion responses don't fail with "Transaction not found" (P2028).
     await db.$transaction(async (tx) => {
       // 1. Save to legacy JSON (for backward compatibility with the existing UI)
       let formData = await tx.appraisalFormData.findUnique({ where: { assignmentId: id } });
@@ -308,16 +311,18 @@ export async function PUT(
         if (body.managerialSkills !== undefined) updateData.managerialSkillsJson = JSON.stringify(existing ? mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'supervisorRating') : body.managerialSkills);
         if (body.explanations !== undefined) updateData.explanationsJson = JSON.stringify(body.explanations);
         if (body.futureGoals !== undefined) updateData.futureGoalsJson = JSON.stringify(body.futureGoals);
-        if (body.employeeSignature !== undefined) updateData.employeeSignature = body.employeeSignature;
-        if (body.employeeSignatureDate !== undefined) updateData.employeeSignatureDate = body.employeeSignatureDate || null;
+        if (body.employeeSignature !== undefined) updateData.employeeSignature = body.employeeSignature || '';
+        // Schema fields are `String @default("")` (non-nullable) — use '' not null.
+        if (body.employeeSignatureDate !== undefined) updateData.employeeSignatureDate = body.employeeSignatureDate || '';
       } else if (currentStage === 'supervisor') {
         if (body.achievements !== undefined && existing) updateData.achievementsJson = JSON.stringify(mergeRatingArrays(existing.achievements, body.achievements, 'employeeRating'));
         if (body.goals !== undefined && existing) updateData.goalsJson = JSON.stringify(mergeRatingArrays(existing.goals, body.goals, 'employeeRating'));
         if (body.technicalSkills !== undefined && existing) updateData.technicalSkillsJson = JSON.stringify(mergeRatingArrays(existing.technicalSkills, body.technicalSkills, 'employeeRating'));
         if (body.leadershipSkills !== undefined && existing) updateData.leadershipSkillsJson = JSON.stringify(mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'employeeRating'));
         if (body.managerialSkills !== undefined && existing) updateData.managerialSkillsJson = JSON.stringify(mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'employeeRating'));
-        if (body.supervisorSignature !== undefined) updateData.supervisorSignature = body.supervisorSignature;
-        if (body.supervisorSignatureDate !== undefined) updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
+        if (body.supervisorSignature !== undefined) updateData.supervisorSignature = body.supervisorSignature || '';
+        // Schema fields are `String @default("")` (non-nullable) — use '' not null.
+        if (body.supervisorSignatureDate !== undefined) updateData.supervisorSignatureDate = body.supervisorSignatureDate || '';
         if (body.remarks !== undefined && existing) {
           const mergedRemarks = { ...existing.remarks, ...body.remarks };
           // Preserve HR fields
@@ -340,10 +345,11 @@ export async function PUT(
         if (body.leadershipSkills !== undefined && existing) updateData.leadershipSkillsJson = JSON.stringify(mergeRatingArrays(existing.leadershipSkills, body.leadershipSkills, 'employeeRating'));
         if (body.managerialSkills !== undefined && existing) updateData.managerialSkillsJson = JSON.stringify(mergeRatingArrays(existing.managerialSkills, body.managerialSkills, 'employeeRating'));
         if (body.remarks !== undefined && existing) updateData.remarksJson = JSON.stringify(body.remarks);
-        if (body.ceoSignature !== undefined) updateData.ceoSignature = body.ceoSignature;
-        if (body.ceoSignatureDate !== undefined) updateData.ceoSignatureDate = body.ceoSignatureDate || null;
-        if (body.supervisorSignature !== undefined) updateData.supervisorSignature = body.supervisorSignature;
-        if (body.supervisorSignatureDate !== undefined) updateData.supervisorSignatureDate = body.supervisorSignatureDate || null;
+        if (body.ceoSignature !== undefined) updateData.ceoSignature = body.ceoSignature || '';
+        // Schema fields are `String @default("")` (non-nullable) — use '' not null.
+        if (body.ceoSignatureDate !== undefined) updateData.ceoSignatureDate = body.ceoSignatureDate || '';
+        if (body.supervisorSignature !== undefined) updateData.supervisorSignature = body.supervisorSignature || '';
+        if (body.supervisorSignatureDate !== undefined) updateData.supervisorSignatureDate = body.supervisorSignatureDate || '';
       }
 
       // Recalculate scores
@@ -478,6 +484,9 @@ export async function PUT(
         create: stageReviewData as any,
         update: stageReviewData as any,
       });
+    }, {
+      maxWait: 20000,  // max time to acquire a transaction connection
+      timeout: 30000,  // max time the transaction can run (default 5s is too short for Neon)
     });
 
     // Return the updated form data

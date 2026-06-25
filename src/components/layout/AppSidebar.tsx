@@ -42,9 +42,9 @@ const navGroups: NavGroup[] = [
   {
     label: 'Main',
     icon: LayoutDashboard,
-    roles: ['admin', 'supervisor', 'management', 'employee'],
+    roles: ['admin', 'supervisor', 'management', 'employee', 'hr', 'ceo'],
     items: [
-      { view: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'supervisor', 'management', 'employee'] },
+      { view: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'supervisor', 'management', 'employee', 'hr', 'ceo'] },
     ],
   },
   {
@@ -63,28 +63,28 @@ const navGroups: NavGroup[] = [
   {
     label: 'Appraisal',
     icon: ClipboardList,
-    roles: ['admin', 'supervisor', 'management', 'employee'],
+    roles: ['admin', 'supervisor', 'management', 'employee', 'hr', 'ceo'],
     items: [
       { view: 'cycles' as const, label: 'Appraisal Cycles', icon: RefreshCw, roles: ['admin'] },
-      { view: 'appraisal-list' as const, label: 'Appraisals', icon: FileText, roles: ['admin', 'supervisor', 'management', 'employee'] },
+      { view: 'appraisal-list' as const, label: 'Appraisals', icon: FileText, roles: ['admin', 'supervisor', 'management', 'employee', 'hr', 'ceo'] },
     ],
   },
   {
     label: 'Communication',
     icon: Bell,
-    roles: ['admin', 'supervisor', 'management', 'employee'],
+    roles: ['admin', 'supervisor', 'management', 'employee', 'hr', 'ceo'],
     items: [
-      { view: 'notifications' as const, label: 'Notifications', icon: Bell, roles: ['admin', 'supervisor', 'management', 'employee'], showBadge: true },
+      { view: 'notifications' as const, label: 'Notifications', icon: Bell, roles: ['admin', 'supervisor', 'management', 'employee', 'hr', 'ceo'], showBadge: true },
     ],
   },
   {
     label: 'Reports & Settings',
     icon: BarChart3,
-    roles: ['admin', 'management', 'supervisor', 'employee'],
+    roles: ['admin', 'management', 'supervisor', 'employee', 'hr', 'ceo'],
     items: [
-      { view: 'reports' as const, label: 'Reports', icon: BarChart3, roles: ['admin', 'management'] },
+      { view: 'reports' as const, label: 'Reports', icon: BarChart3, roles: ['admin', 'management', 'hr'] },
       { view: 'audit-logs' as const, label: 'Audit Logs', icon: Shield, roles: ['admin'] },
-      { view: 'settings' as const, label: 'Settings', icon: Settings, roles: ['admin', 'supervisor', 'management', 'employee'] },
+      { view: 'settings' as const, label: 'Settings', icon: Settings, roles: ['admin', 'supervisor', 'management', 'employee', 'hr', 'ceo'] },
     ],
   },
 ];

@@ -41,8 +41,8 @@ export async function GET(request: NextRequest) {
       // Return only supervisor assignments, excluding self
       where.supervisorId = userId;
       where.employeeId = { not: userId };
-    } else if (managementView && (authenticatedRole === 'management' || authenticatedRole === 'admin')) {
-      // Management/admin view: return all assignments
+    } else if (managementView && (authenticatedRole === 'management' || authenticatedRole === 'admin' || authenticatedRole === 'hr')) {
+      // Management/admin/HR view: return all assignments
       // No additional user-specific filter
     } else {
       // Default behavior: apply filters individually

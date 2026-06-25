@@ -10,7 +10,7 @@ import { Loader2, LogIn, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function LoginView() {
-  const { setCurrentUser, setIsLoggedIn, setCurrentView } = useAppStore();
+  const { setCurrentUser, setIsLoggedIn, setCurrentView, setSidebarOpen } = useAppStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -36,6 +36,9 @@ export default function LoginView() {
         setCurrentUser(user);
         setIsLoggedIn(true);
         setCurrentView('dashboard');
+        // Always show the sidebar on fresh login — prevents inheriting a
+        // collapsed state from a previous user's session.
+        setSidebarOpen(true);
         toast.success(`Welcome, ${user.name}!`);
       } else {
         const data = await res.json();

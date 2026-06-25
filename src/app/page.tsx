@@ -134,7 +134,7 @@ function AppShell() {
 }
 
 export default function Home() {
-  const { isLoggedIn, setCurrentUser, setIsLoggedIn, setCurrentView } = useAppStore();
+  const { isLoggedIn, setCurrentUser, setIsLoggedIn, setCurrentView, setSidebarOpen } = useAppStore();
   const [restoring, setRestoring] = useState(true);
 
   // Restore session from httpOnly cookie on mount / page refresh.
@@ -149,6 +149,9 @@ export default function Home() {
             setCurrentUser(user);
             setIsLoggedIn(true);
             setCurrentView('dashboard');
+            // Ensure sidebar is visible after a page refresh / session restore,
+            // so users don't lose navigation if a previous session left it collapsed.
+            setSidebarOpen(true);
           }
         }
       } catch {
@@ -160,7 +163,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [setCurrentUser, setIsLoggedIn, setCurrentView]);
+  }, [setCurrentUser, setIsLoggedIn, setCurrentView, setSidebarOpen]);
 
   if (restoring) {
     return (
