@@ -339,12 +339,20 @@ export default function AppraisalForm() {
 
     setSubmitting(true);
     try {
-      // Save form data first
-      await apiFetch(`/api/assignments/${assignmentId}/form`, {
+      // Save form data first — if this fails, DO NOT proceed with the submit.
+      // Without this guard, the workflow would advance but the reviewer's
+      // ratings would be lost (the root cause of "supervisor rating not showing").
+      const saveRes = await apiFetch(`/api/assignments/${assignmentId}/form`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...formData, callerId: currentUser?.id, _isDraft: true }),
       });
+      if (!saveRes.ok) {
+        const saveErr = await saveRes.json().catch(() => ({}));
+        toast.error(saveErr.error || 'Failed to save form data before submitting. Your ratings were NOT submitted — please try again.');
+        setSubmitting(false);
+        return;
+      }
 
       const action = getSubmitAction();
       const res = await apiFetch(`/api/assignments/${assignmentId}/submit`, {

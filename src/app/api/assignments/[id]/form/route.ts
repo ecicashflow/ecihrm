@@ -129,7 +129,11 @@ export async function GET(
     const legacyFutureGoals = JSON.parse(fd.futureGoalsJson);
     const legacyRemarks = JSON.parse(fd.remarksJson);
 
-    // Build merged arrays: use criterion responses if available, otherwise legacy
+    // Build merged arrays: prefer criterion responses (authoritative per-stage
+    // data) over legacy JSON. The legacy JSON can have stale/missing values if
+    // a previous PUT call failed partway through. Criterion responses are the
+    // source of truth — each reviewer's score is stored in its own row keyed
+    // by (assignmentId, criterionName, section, index, reviewStage).
     function buildMergedArray(section: string, legacy: any[], defaults: any[]) {
       const result: any[] = [];
       const maxLen = Math.max(legacy.length, defaults.length);
@@ -138,13 +142,35 @@ export async function GET(
         const def = defaults[i] || {};
         const key = `${section}__${i}`;
         const respData = responseMap.get(key) || {};
+
+        // Criterion response scores (authoritative). A score of 0 is valid
+        // ("No Achievement"), so we only fall back to legacy if the criterion
+        // response doesn't exist at all (undefined).
+        const empResp = respData.EMPLOYEE_SELF;
+        const supResp = respData.SUPERVISOR_REVIEW;
+
+        // Helper: convert criterion-response rating (string) to number|'NA'
+        function normalizeRating(rating: any): number | 'NA' {
+          if (rating === undefined || rating === null || rating === '') return 0;
+          if (rating === 'NA') return 'NA';
+          const n = Number(rating);
+          return isNaN(n) ? 0 : n;
+        }
+
+        const employeeRating =
+          empResp !== undefined ? normalizeRating(empResp.rating) :
+          (leg.employeeRating ?? def.employeeRating ?? 0);
+        const supervisorRating =
+          supResp !== undefined ? normalizeRating(supResp.rating) :
+          (leg.supervisorRating ?? def.supervisorRating ?? 0);
+
         result.push({
           ...def,
           ...leg,
           name: leg.name || def.name || '',
           description: leg.description || def.description || '',
-          employeeRating: leg.employeeRating ?? def.employeeRating ?? 0,
-          supervisorRating: leg.supervisorRating ?? def.supervisorRating ?? 0,
+          employeeRating,
+          supervisorRating,
           // Also include structured response data by stage
           responses: respData,
         });
@@ -291,12 +317,16 @@ export async function PUT(
           const merged: any = { ...ex };
           if (inc.description !== undefined) merged.description = inc.description;
           if (inc.name !== undefined) merged.name = inc.name;
+          // Save the incoming rating for the "other" role (the one being updated).
+          // 0 is a valid rating ("No Achievement"), so we accept any defined value.
+          // 'NA' is also valid. Only fall back to existing if incoming is undefined.
           const incRating = inc[otherKey];
           const exRating = ex[otherKey];
           if (incRating === 'NA') merged[otherKey] = 'NA';
-          else if (incRating !== undefined && Number(incRating) > 0) merged[otherKey] = incRating;
+          else if (incRating !== undefined && incRating !== null) merged[otherKey] = incRating;
           else if (exRating !== undefined) merged[otherKey] = exRating;
           else merged[otherKey] = 0;
+          // Preserve the other role's rating from existing data
           merged[preserveKey] = ex[preserveKey] !== undefined ? ex[preserveKey] : (inc[preserveKey] ?? 0);
           result.push(merged);
         }
